@@ -8,3 +8,5 @@ figures/*
 tables/*
 !figures/.gitkeep
 !tables/.gitkeep
+
+.Rproj.user/
