@@ -38,7 +38,3 @@ tables/            结果表
 references.bib     BibTeX 文献
 project_plan.Rmd   详细项目大纲
 
-## Scope
-
-本项目不以 LLM benchmark 为主线，也不研究去偏 LASSO、Graphical LASSO、秩回归或符号秩方法。重点是协方差矩阵本身的估计风险和谱稳定性。精度矩阵、稀疏图结构和稀疏回归只在讨论中作为边界与对照，不作为主要方法。
-
