@@ -1,0 +1,10 @@
+.DS_Store
+.Rhistory
+.RData
+.Ruserdata
+data/raw/*
+data/processed/*
+figures/*
+tables/*
+!figures/.gitkeep
+!tables/.gitkeep
