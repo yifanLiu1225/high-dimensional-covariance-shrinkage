@@ -2,11 +2,21 @@
 .Rhistory
 .RData
 .Ruserdata
-data/raw/*
-data/processed/*
+.Rproj.user/
+
+# Generated analysis outputs
 figures/*
 tables/*
+report/*.html
+report/*_files/
+data/raw/*
+data/processed/*
 !figures/.gitkeep
 !tables/.gitkeep
+!data/raw/.gitkeep
+!data/processed/.gitkeep
 
-.Rproj.user/
+# Local caches
+renv/library/
+renv/staging/
+

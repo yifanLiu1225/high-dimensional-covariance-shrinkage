@@ -1,700 +1,615 @@
 ---
-title: "超越排行榜：大语言模型能力画像、评测冗余与排名稳定性的多元统计分析"
-author: "多元统计分析课程项目"
+title: "高维协方差收缩：样本协方差的风险、谱失真与稳定化"
+author: "多元统计分析课程大作业"
 date: "2026-10-30"
 output:
   html_document:
     toc: true
-    toc_depth: 3
+    toc_float: true
     number_sections: true
 ---
 
 # 项目核心
 
-**超越排行榜：用多元统计识别大语言模型的潜在能力结构、评测冗余与排名稳定性。**
+## 核心词组
 
-这句话同时回答三个问题：
+> **高维协方差收缩：样本协方差的风险、谱失真与稳定化。**
 
-1. LLM benchmark 分数背后是否存在少数潜在能力维度？
-2. 多个高度相关的 benchmark 是否会对同一能力重复计分？
-3. 一个综合排行榜是否会掩盖模型的专长、短板和能力结构异常？
+## 一句话研究主张
+
+当维数 \(p\) 与样本量 \(n\) 同阶时，样本协方差矩阵虽然无偏，却可能具有很大的整体风险和严重的谱失真；线性收缩估计通过引入可控偏差，降低估计方差，改善特征值、条件数和下游二次型的稳定性。
 
 ## 项目定位
 
-本项目不训练大型语言模型，也不复现复杂的深度学习算法，而是把公开的 LLM 评测结果当作一个多元测量问题来研究。每个模型是一条观测记录，每个 benchmark 是一个变量。项目的主体由“理论推导—模拟验证—真实数据分析—外部有效性检查”组成。
-
-项目最终要形成的结论不是“哪个模型排名第一”，而是：
-
-> 一个单一综合分数能否充分描述模型能力？如果不能，哪些潜在能力维度、相关结构和评测不确定性需要被报告？
-
-# 一、研究背景与动机
-
-当前 LLM 评测同时包含知识、推理、数学、代码、工具使用、Agent 和安全等多个维度。OpenAI 的 Deep Research system card 将能力、安全、隐私、prompt injection 和工具使用分别进行评估；Anthropic 的 Claude 3.7 system card 也分别报告 coding、网络安全、prompt injection、拒答和模型自主性等结果。这说明前沿模型评估越来越接近一个多维评估向量，而不是一个总分。
-
-如果把所有 benchmark 简单平均，会产生三个统计问题：
-
-1. benchmark 之间高度相关，可能重复测量同一能力；
-2. benchmark 的量纲、难度和评测条件不同，简单平均缺乏统计依据；
-3. 模型分数中存在缺失值、评测噪声和版本差异，单一排名可能不稳定。
-
-多元统计分析能够提供一套透明、可解释且适合课程项目的方法：
-
-- 协方差和相关矩阵用于研究评测冗余；
-- PCA 和因子模型用于提取潜在能力；
-- Mahalanobis 距离用于识别能力画像异常；
-- 稳健协方差用于检查极端模型是否改变整体结论；
-- Bootstrap 和模拟实验用于验证排名和方法的稳定性。
-
-# 二、数据方案
-
-## 2.1 主数据集
-
-主数据集使用 Hugging Face 的 OpenEvals/leaderboard-data。该数据集聚合多个公开 benchmark 的模型成绩，并包含模型名称、提供方、参数量、架构以及多个 benchmark 分数。候选变量包括 AIME、GPQA、GSM8K、HLE、MMLU-Pro、SWE-bench、TerminalBench 等。
-
-数据来源：
-
-- Hugging Face leaderboard 数据说明：<https://huggingface.co/docs/hub/leaderboard-data-guide>
-- OpenEvals leaderboard 数据集：<https://huggingface.co/datasets/OpenEvals/leaderboard-data>
-
-数据会随时间更新，因此项目必须保存：
-
-1. 下载日期；
-2. 数据集 revision 或 commit；
-3. 原始下载文件；
-4. 数据处理脚本；
-5. 最终纳入分析的模型清单。
-
-## 2.2 数据纳入标准
-
-为了避免缺失值过多和比较不公平，主分析使用以下规则：
-
-1. 至少有 5 个 benchmark 分数的模型进入主样本；
-2. benchmark 分数统一转化到 0--100 或 0--1 的可比较尺度；
-3. 不把数据集中的 aggregate_score 放入 PCA、因子分析和距离计算；
-4. 不把不同类型的指标直接混合，例如准确率、pass@k 和人类评分必须先分组说明；
-5. 对模型版本和重复提交进行去重；
-6. 记录每个变量的缺失率，并做完整案例分析与敏感性分析；
-7. 不把 benchmark 排名当作真实能力的无误差观测。
-
-# 三、理论框架
-
-## 3.1 潜在能力测量模型
-
-设第 \(i\) 个模型的潜在能力向量为 \(f_i\)，第 \(j\) 个 benchmark 的观测分数为 \(Y_{ij}\)。采用多因子测量模型：
+本项目以理论推导为主，模拟实验和小规模应用为辅。四位组员共同完成一个完整的理论链条：
 
 \[
-Y_i=\mu+\Lambda f_i+\varepsilon_i,
+\text{Wishart/sample covariance}
+\rightarrow
+\text{risk decomposition}
+\rightarrow
+\text{shrinkage}
+\rightarrow
+\text{spectral stability}
+\rightarrow
+\text{quadratic-form applications}.
 \]
 
-其中：
+项目不训练模型，不做 LLM benchmark 排行榜，也不把实践数据分析作为主体。实践部分只用于检验理论预测是否在有限样本中出现。
 
-- \(Y_i\) 是第 \(i\) 个模型的 benchmark 分数向量；
-- \(f_i\) 是不可直接观察的能力向量；
-- \(\Lambda\) 是 benchmark 在各能力维度上的载荷矩阵；
-- \(\varepsilon_i\) 是 benchmark 特有的测量误差。
+# 一、与其他组选题的区分
 
-在 \(E(f_i)=0\)、\(E(\varepsilon_i)=0\)、\(Cov(f_i,\varepsilon_i)=0\) 下：
+本项目不重复以下方向：
+
+1. 去偏 LASSO：重点是稀疏回归系数的偏差修正和推断；
+2. 高斯图模型与 Graphical LASSO：重点是精度矩阵的稀疏结构和条件独立性；
+3. 秩回归与符号秩方法：重点是稳健回归和非参数秩推断。
+
+本项目研究的是**协方差矩阵本身**：它不要求稀疏回归系数，也不以精度矩阵的图结构为目标，关注的是协方差估计的风险、特征值和正定性。
+
+# 二、研究问题与可检验命题
+
+## 2.1 主要研究问题
+
+### Q1：无偏为什么仍然不够？
+
+样本协方差满足 \(E(S)=\Sigma\)，但在高维情形中无偏性不保证 Frobenius 风险小，也不保证逆矩阵稳定。需要区分“逐元素无偏”和“整体矩阵估计质量”。
+
+### Q2：收缩为什么能改善估计？
+
+对
 
 \[
-\Sigma_Y=\Lambda\Phi\Lambda^\top+\Psi.
+\widehat\Sigma_\lambda=(1-\lambda)S+\lambda T
 \]
 
-这个等式是项目的理论起点。它说明 benchmark 之间的协方差，既可能来自共同的潜在能力，也可能来自 benchmark 自身的误差和特殊性。
+进行风险分解，说明适度偏差如何换取方差下降。
 
-## 3.2 相关 benchmark 的信息冗余推导
+### Q3：收缩到底改善了什么？
 
-先考虑一个简单情形：
+比较样本协方差和收缩协方差的：
+
+- Frobenius 风险；
+- 谱范数误差；
+- 最小特征值；
+- 最大特征值；
+- 条件数；
+- 逆矩阵误差；
+- 马氏距离和 Hotelling \(T^2\) 的有限样本表现。
+
+### Q4：收缩方法什么时候会失败或不值得？
+
+当目标矩阵与真实协方差结构差异很大、样本量充分或真实结构高度稀疏时，过强收缩可能产生明显偏差。项目需要同时讨论收益和代价，而不是预设收缩方法总是更好。
+
+## 2.2 可检验命题
+
+**命题 1：** 当 \(p/n\) 增大时，样本协方差的最小特征值更容易接近零，条件数增大。
+
+**命题 2：** 在相同样本量和真实协方差下，适度线性收缩通常降低 Frobenius 风险。
+
+**命题 3：** 以 \(\mu I_p\) 为目标的收缩会压缩极端特征值，并提高最小特征值。
+
+**命题 4：** 收缩协方差对依赖逆矩阵的马氏距离和 Hotelling \(T^2\) 通常具有更好的数值稳定性，但过度收缩会牺牲结构信息。
+
+**命题 5：** 当真实协方差具有明显的块结构或尖峰特征值时，目标矩阵的选择会决定收缩估计的效果。
+
+# 三、理论基础 I：样本协方差与 Wishart 分布
+
+## 3.1 多元正态模型
+
+设
 
 \[
-Y_j=\theta+\varepsilon_j,\qquad j=1,\ldots,m,
+X_1,\ldots,X_n\stackrel{\mathrm{iid}}{\sim}N_p(\mu,\Sigma),
 \]
 
-其中 \(Var(\theta)=\tau^2\)，\(Var(\varepsilon_j)=\sigma^2\)，且误差项相互独立。
-
-平均 benchmark 分数为：
+样本均值和样本协方差分别为
 
 \[
-\bar Y_m=\frac{1}{m}\sum_{j=1}^mY_j.
+\bar X=\frac{1}{n}\sum_{i=1}^nX_i,
+\qquad
+S=\frac{1}{n-1}\sum_{i=1}^n(X_i-\bar X)(X_i-\bar X)^\top.
+\]
+
+在正态模型下：
+
+\[
+(n-1)S\sim W_p(n-1,\Sigma),
+\]
+
+并且 \(\bar X\) 与 \(S\) 相互独立。
+
+这部分联系课程中的：多元正态分布、Wishart 分布、样本均值和协方差的独立性。
+
+## 3.2 无偏性不等于低风险
+
+虽然
+
+\[
+E(S)=\Sigma,
+\]
+
+但矩阵估计应考虑整体损失，例如
+
+\[
+L_F(\widehat\Sigma,\Sigma)
+=\|\widehat\Sigma-\Sigma\|_F^2.
+\]
+
+逐元素无偏只说明每个元素的平均误差为零，并不意味着所有元素的平方误差总和较小，也不意味着矩阵的特征值和逆矩阵表现良好。
+
+## 3.3 样本协方差元素的协方差
+
+正态模型下可推导：
+
+\[
+\operatorname{Cov}(S_{ij},S_{kl})
+=\frac{1}{n-1}
+(\Sigma_{ik}\Sigma_{jl}+\Sigma_{il}\Sigma_{jk}).
+\]
+
+这个公式说明：
+
+1. 样本量越大，估计波动越小；
+2. 总体方差和协方差越大，样本协方差的波动越大；
+3. 矩阵元素之间的估计误差并不独立；
+4. 当 \(p\) 增加时，需要同时估计的元素数量按 \(p^2\) 增长。
+
+# 四、理论基础 II：线性收缩估计
+
+## 4.1 基本估计量
+
+定义
+
+\[
+\widehat\Sigma_\lambda=(1-\lambda)S+\lambda T,
+\qquad 0\leq\lambda\leq1.
+\]
+
+典型目标矩阵：
+
+### 球形目标
+
+\[
+T_1=\mu I_p,
+\qquad
+\mu=\frac{\operatorname{tr}(S)}{p}.
+\]
+
+它假设变量方差大致相同、变量间相关性不作为主要结构。
+
+### 对角目标
+
+\[
+T_2=\operatorname{diag}(S).
+\]
+
+它保留每个变量的方差，但将协方差收缩到零。
+
+### 常相关目标
+
+\[
+T_3=(1-\rho)D+\rho\sqrt{D}\mathbf 1\mathbf 1^\top\sqrt{D},
+\]
+
+其中 \(D=\operatorname{diag}(S)\)，用于保留一个共同相关水平。
+
+项目将重点比较 \(T_1\) 和 \(T_2\)，常相关目标作为扩展。
+
+## 4.2 偏差—方差风险分解
+
+令
+
+\[
+A=S-\Sigma,
+\qquad
+B=T-\Sigma.
+\]
+
+则
+
+\[
+\widehat\Sigma_\lambda-\Sigma
+=(1-\lambda)A+\lambda B.
+\]
+
+在 Frobenius 损失下：
+
+\[
+\begin{aligned}
+R(\lambda)
+&=E\|\widehat\Sigma_\lambda-\Sigma\|_F^2\\
+&=(1-\lambda)^2E\|S-\Sigma\|_F^2
++\lambda^2\|T-\Sigma\|_F^2\\
+&\quad+2\lambda(1-\lambda)E\langle S-\Sigma,T-\Sigma\rangle.
+\end{aligned}
+\]
+
+如果 \(T\) 是固定目标矩阵且 \(E(S)=\Sigma\)，交叉项为零。令
+
+\[
+a=E\|S-\Sigma\|_F^2,
+\qquad
+b=\|T-\Sigma\|_F^2,
+\]
+
+则
+
+\[
+R(\lambda)=(1-\lambda)^2a+\lambda^2b.
+\]
+
+对 \(\lambda\) 求导：
+
+\[
+R'(\lambda)=-2(1-\lambda)a+2\lambda b.
+\]
+
+令 \(R'(\lambda)=0\)，得到：
+
+\[
+\boxed{\lambda^\ast=\frac{a}{a+b}}.
+\]
+
+这个推导是项目的理论主线：样本协方差风险越大，越应该收缩；目标矩阵偏差越大，越不能过度收缩。
+
+## 4.3 数据驱动的收缩强度
+
+真实的 \(a\) 和 \(b\) 通常未知，因此实践中需要用样本估计：
+
+\[
+\hat\lambda
+=\operatorname{clip}_{[0,1]}
+\left(\frac{\widehat a}{\widehat a+\widehat b}\right).
+\]
+
+项目可以实现：
+
+1. 固定 \(\lambda\) 的网格搜索；
+2. 基于风险估计的收缩强度；
+3. corpcor 等 R 包提供的线性收缩估计作为实现对照。
+
+# 五、理论基础 III：高维谱失真
+
+## 5.1 为什么 \(p/n\) 是关键比例
+
+经典渐近理论通常假设 \(p\) 固定、\(n\to\infty\)。高维情形改为研究：
+
+\[
+\frac{p}{n}\to c\in(0,1).
+\]
+
+当 \(c\) 较大时，样本协方差不再是总体协方差的简单稳定近似。
+
+## 5.2 单位协方差下的特征值扩散
+
+即使
+
+\[
+\Sigma=I_p,
+\]
+
+样本协方差的特征值也不会全部集中在 1 附近。在高维极限下，特征值大致分布在：
+
+\[
+[(1-\sqrt c)^2,(1+\sqrt c)^2].
+\]
+
+当 \(c\to1\) 时，下界趋近于 0，样本协方差的逆矩阵变得不稳定；当 \(p>n-1\) 时，样本协方差必然奇异。
+
+## 5.3 收缩对谱的作用
+
+当 \(T=\mu I_p\) 时，若 \(S\) 的特征值为 \(d_1,\ldots,d_p\)，则收缩矩阵的特征值为：
+
+\[
+\hat d_j=(1-\lambda)d_j+\lambda\mu.
 \]
 
 因此：
 
-\[
-Var(\bar Y_m)=\tau^2+\frac{\sigma^2}{m}.
-\]
+- 小特征值被抬高；
+- 大特征值被压低；
+- 条件数通常下降；
+- 矩阵求逆更稳定；
+- 真实尖峰结构也可能被过度削弱。
 
-令任意两个 benchmark 的相关系数为：
+项目需要同时展示收缩的稳定化收益和结构偏差。
 
-\[
-\rho=\frac{\tau^2}{\tau^2+\sigma^2},
-\]
+# 六、与多元统计下游方法的联系
 
-则：
+## 6.1 马氏距离
 
-\[
-Var(\bar Y_m)
-=
-(\tau^2+\sigma^2)
-\left[
-\rho+\frac{1-\rho}{m}
-\right].
-\]
-
-结论：
-
-- 当 \(\rho=0\) 时，增加独立 benchmark 可以明显降低平均分的误差；
-- 当 \(\rho\) 较大时，增加相似 benchmark 后，方差下降很慢；
-- 简单平均可能对共同能力方向重复计分；
-- benchmark 数量多不等于有效信息量多。
-
-真实数据检验：
-
-1. 估计 benchmark 相关矩阵；
-2. 检查是否存在明显相关块；
-3. 比较简单平均、PCA 第一主成分和因子得分；
-4. 分析增加高度相关 benchmark 后排名是否真的更稳定。
-
-## 3.3 PCA 与潜在能力方向
-
-对标准化 benchmark 矩阵 \(Z\) 的相关矩阵 \(R\) 进行特征分解：
+马氏距离平方为：
 
 \[
-R=Q\Lambda Q^\top.
+D^2(x)=(x-\mu)^\top\Sigma^{-1}(x-\mu).
 \]
 
-第 \(i\) 个模型的主成分得分为：
+实际计算中使用 \(\widehat\Sigma^{-1}\)。如果样本协方差接近奇异，距离可能剧烈波动；收缩协方差可以提高正定性和数值稳定性。
+
+## 6.2 Hotelling \(T^2\)
+
+Hotelling 统计量的形式包含样本协方差的逆：
 
 \[
-t_i=Q^\top z_i.
+T^2=n(\bar X-\mu_0)^\top S^{-1}(\bar X-\mu_0).
 \]
 
-第 \(k\) 个主成分的解释比例为：
+经典理论在 \(p<n\) 且模型条件满足时成立。项目可以模拟比较：使用普通 \(S\) 和收缩 \(\widehat\Sigma_\lambda\) 时，有限样本的拒绝率、置信区域和数值失败率。
+
+## 6.3 线性判别分析
+
+LDA 的判别函数包含 \(\Sigma^{-1}\)。因此协方差估计的谱稳定性会直接影响分类边界。该部分作为可选实践，不需要发展成另一个完整课题。
+
+## 6.4 与 Graphical LASSO 的边界
+
+Graphical LASSO 直接对精度矩阵施加稀疏惩罚，目标是发现条件独立图；本项目只把它作为讨论中的对照，不研究稀疏图结构。我们的目标是改善协方差估计的整体风险和谱性质。
+
+# 七、模拟实验设计
+
+## 7.1 因素设置
+
+至少设置以下 \(p,n\) 组合：
+
+| Regime | \(n\) | \(p\) | \(p/n\) |
+|---|---:|---:|---:|
+| low-dimensional | 500 | 10 | 0.02 |
+| moderate-dimensional | 200 | 50 | 0.25 |
+| high-dimensional | 200 | 150 | 0.75 |
+| near-singular | 150 | 140 | 0.93 |
+| singular | 100 | 200 | 2.00 |
+
+## 7.2 真实协方差结构
+
+### Identity
 
 \[
-\frac{\lambda_k}{\sum_{j=1}^{p}\lambda_j}.
+\Sigma=I_p.
 \]
 
-PCA 的作用不只是降维，而是把 benchmark 重新表达为几个潜在能力方向。主成分的命名必须根据载荷解释，例如：
+检验纯粹高维谱失真。
 
-- general reasoning；
-- mathematical reasoning；
-- coding and agentic ability；
-- safety or instruction-following。
-
-这些名称只能在观察载荷后确定，不能预先规定。
-
-## 3.4 Mahalanobis 距离与 PCA 分解
-
-对标准化向量 \(z_i\)，Mahalanobis 距离平方为：
+### AR(1) 结构
 
 \[
-D_i^2=z_i^\top R^{-1}z_i.
+\Sigma_{ij}=\rho^{|i-j|}.
 \]
 
-由于 \(R=Q\Lambda Q^\top\)，有：
+检验变量具有逐渐衰减相关性的情况。
+
+### Block correlation
+
+变量分为若干组，同组相关系数高，组间相关系数低。该结构对应潜在领域或模块。
+
+### Spiked covariance
 
 \[
-D_i^2
-=
-\sum_{j=1}^{p}\frac{t_{ij}^2}{\lambda_j}.
+\Sigma=V\operatorname{diag}(\alpha_1,\ldots,\alpha_q,1,\ldots,1)V^\top.
 \]
 
-如果保留前 \(k\) 个主成分，可以定义：
+检验收缩对明显主成分和尖峰特征值的影响。
+
+## 7.3 比较方法
+
+1. 样本协方差 \(S\)；
+2. 球形线性收缩 \((1-\lambda)S+\lambda\mu I\)；
+3. 对角线性收缩；
+4. 数据驱动的线性收缩；
+5. 可选：非线性谱收缩作为理论扩展。
+
+## 7.4 评价指标
+
+### 矩阵估计风险
 
 \[
-T_{i,k}^2
-=
-\sum_{j=1}^{k}\frac{t_{ij}^2}{\lambda_j},
+\|\widehat\Sigma-\Sigma\|_F^2,
+\qquad
+\|\widehat\Sigma-\Sigma\|_2.
 \]
 
-以及残差平方：
+### 谱指标
 
-\[
-Q_{i,k}
-=
-\sum_{j=k+1}^{p}t_{ij}^2.
-\]
+- 最大特征值误差；
+- 最小特征值；
+- 条件数；
+- 特征值排序相关性。
 
-解释：
+### 下游指标
 
-- 高 \(T^2\)：模型在主流能力方向上表现极端；
-- 高 \(Q\)：模型的能力组合不能被主要潜在维度解释；
-- 高 \(T^2\) 和高 \(Q\)：既是主流能力空间中的极端点，又具有特殊结构；
-- Mahalanobis 距离并不等于“模型差”，而是表示模型能力画像偏离总体。
+- 马氏距离的数值波动；
+- Hotelling \(T^2\) 的经验拒绝率；
+- LDA 分类错误率；
+- 矩阵求逆失败比例。
 
-## 3.5 Mahalanobis 距离的分布假设
+每个条件至少重复 500 次，报告均值、标准差和 Monte Carlo 置信区间。最终汇报可以展示 100 次快速版本，报告使用 500 次正式版本。
 
-若：
+# 八、小规模应用设计
 
-\[
-Z\sim N_p(\mu,\Sigma),
-\]
+实践只用于辅助理论，不替代理论推导。
 
-且 \(\mu\)、\(\Sigma\) 已知，那么经过白化变换：
+## 8.1 低维基准
 
-\[
-U=\Sigma^{-1/2}(Z-\mu)\sim N_p(0,I).
-\]
+使用 R 自带或常用的中等维度数据集，例如 MASS::Boston 的数值变量，作为 \(p/n\) 较小的控制组。预期普通样本协方差和收缩估计的差异不会很大。
 
-于是：
+## 8.2 半真实高维实验
 
-\[
-D^2=U^\top U\sim\chi_p^2.
-\]
+从真实数据估计变量尺度和相关结构，再通过以下方式构造可控的高维版本：
 
-但在真实 LLM benchmark 数据中：
+1. 保留真实协方差的前若干主方向；
+2. 增加独立噪声变量；
+3. 设定不同的 \(p/n\)；
+4. 重复生成样本并比较估计风险。
 
-- 模型数量有限；
-- benchmark 分数不一定服从多元正态；
-- \(\mu\) 和 \(\Sigma\) 是估计得到的；
-- 不同模型可能使用不同评测配置。
+这样既保留现实相关结构，又能严格控制理论条件，不把项目变成单纯数据分析。
 
-因此，本项目不把 \(\chi^2\) 阈值当作绝对真理，而是比较：
+## 8.3 应用结果应该回答什么
 
-1. 理论 \(\chi^2\) 阈值；
-2. bootstrap 经验阈值；
-3. 稳健协方差下的阈值；
-4. 不同阈值下的异常模型稳定性。
+- 在低维数据中，收缩是否只是轻微修正？
+- 当加入噪声变量后，样本协方差的条件数是否明显恶化？
+- 收缩是否改善马氏距离和 Hotelling \(T^2\) 的稳定性？
+- 目标矩阵选择是否会改变结论？
 
-## 3.6 稳健 Mahalanobis 距离
+# 九、四人任务分工
 
-经典距离依赖样本均值和样本协方差：
+四位组员各负责一个理论模块和一个验证模块，工作量尽量均衡。每人预计讲 7—8 分钟，总汇报约 30 分钟。
 
-\[
-D_i^2=(x_i-\bar{x})^\top S^{-1}(x_i-\bar{x}).
-\]
-
-稳健版本使用 MCD 位置和协方差估计：
-
-\[
-D_{i,\mathrm{rob}}^2
-=
-(x_i-\hat{\mu}_{MCD})^\top
-\hat{\Sigma}_{MCD}^{-1}
-(x_i-\hat{\mu}_{MCD}).
-\]
-
-需要比较：
-
-- 哪些模型在经典方法下异常；
-- 哪些模型在稳健方法下仍然异常；
-- 哪些排名只由极端模型影响；
-- 稳健方法是否牺牲了对 specialist model 的敏感性。
-
-# 四、模拟实验设计
-
-## 4.1 模拟数据生成
-
-设置 \(n=100\) 个模型、\(p=8\) 个 benchmark、\(q=2\) 个潜在能力因子：
-
-\[
-f_i\sim N_q(0,\Phi),
-\]
-
-\[
-Y_i=\Lambda f_i+\varepsilon_i,\qquad
-\varepsilon_i\sim N_p(0,\Psi).
-\]
-
-载荷矩阵可以预先设置为：
-
-- benchmark 1--3 主要测 general reasoning；
-- benchmark 4--5 主要测 mathematics；
-- benchmark 6--8 主要测 coding/agent ability。
-
-## 4.2 污染情形
-
-模拟以下情形：
-
-1. 无污染；
-2. 一个 general reasoning specialist；
-3. 一个 coding specialist；
-4. 一个总体能力很低但结构正常的模型；
-5. 一个完全异常模型；
-6. 两个高度相关 benchmark 被同时人为提高；
-7. 10% 的模型分数被污染。
-
-## 4.3 模拟验证目标
-
-验证：
-
-1. PCA 是否能够恢复预设能力方向；
-2. benchmark 相关矩阵是否反映潜在因子；
-3. 简单平均是否把 specialist model 隐藏起来；
-4. Mahalanobis 距离是否能发现组合异常；
-5. \(T^2\) 与 \(Q\) 是否能区分主流空间异常和结构外异常；
-6. 经典协方差和稳健协方差在污染数据下的差异；
-7. 理论方差公式和模拟方差是否接近。
-
-## 4.4 模拟评价指标
-
-- PCA 载荷与真实载荷的相似度；
-- 因子数识别正确率；
-- 异常检测 precision、recall、F1；
-- Top-k 命中率；
-- AUROC；
-- 模型排名的 Kendall tau；
-- 经典与稳健方法的排名重合率。
-
-# 五、真实 LLM 数据分析流程
-
-## 5.1 数据质量与可比性
-
-输出：
-
-- 模型数量、benchmark 数量；
-- 缺失值热图；
-- 每个模型的 benchmark 覆盖率；
-- 每个 benchmark 的有效模型数量；
-- 模型版本去重表；
-- 评测条件说明。
-
-不要把不同评测设定下的分数直接当作完全同质的观测。对于缺失值，主分析使用完整案例或预先设定的覆盖率门槛；均值填补只能作为敏感性分析。
-
-## 5.2 benchmark 相关结构
-
-计算：
-
-- Pearson 相关；
-- Spearman 相关；
-- 控制参数量后的偏相关；
-- benchmark 聚类；
-- 特征值和有效维度。
-
-研究：
-
-> 哪些 benchmark 可能测量同一能力？哪些 benchmark 提供了独立信息？
-
-## 5.3 PCA 与因子分析
-
-输出：
-
-- scree plot；
-- parallel analysis；
-- benchmark loading heatmap；
-- model score plot；
-- biplot；
-- 各模型的潜在能力得分。
-
-比较：
-
-- 简单平均；
-- 官方 aggregate score；
-- PCA 第一主成分；
-- 多因子得分。
-
-## 5.4 模型能力画像与聚类
-
-在标准化 benchmark 空间或 PCA 空间中进行聚类。聚类目的不是得到“最终真相”，而是发现不同能力画像，例如：
-
-- balanced generalists；
-- reasoning specialists；
-- coding/agent specialists；
-- lower-score but structurally consistent models。
-
-聚类数使用 silhouette、Gap statistic 或稳定性指标辅助决定，不只凭肉眼选择。
-
-## 5.5 多元异常诊断
-
-比较：
-
-- 标准化欧氏距离；
-- 经典 Mahalanobis；
-- 稳健 Mahalanobis；
-- PCA \(T^2\)；
-- PCA \(Q\)。
-
-每个异常模型都要生成解释表：
-
-- 总体排名；
-- 各 benchmark 标准化分数；
-- 最大 PCA 贡献；
-- \(T^2\)；
-- \(Q\)；
-- 经典与稳健距离；
-- bootstrap 进入 Top-5 的概率。
-
-## 5.6 排名稳定性
-
-进行以下敏感性分析：
-
-1. 删除某一个 benchmark 后重新排序；
-2. 只保留 reasoning 类 benchmark；
-3. 只保留 coding/agent 类 benchmark；
-4. 使用 bootstrap 重抽 benchmark；
-5. 对分数加入小幅测量误差；
-6. 比较简单平均、PCA 得分和稳健距离排名。
-
-输出：
-
-- Kendall tau；
-- Spearman correlation；
-- Top-k overlap；
-- rank interval；
-- 每个模型成为 Top-k 的概率。
-
-# 六、项目预期图表与表格
-
-## 必做图表
-
-1. benchmark missingness heatmap；
-2. benchmark correlation heatmap；
-3. scree plot；
-4. PCA loading plot；
-5. model capability profile heatmap；
-6. PCA biplot；
-7. model clustering plot；
-8. classical versus robust Mahalanobis distance；
-9. \(T^2\)-\(Q\) diagnostic plot；
-10. ranking stability plot；
-11. benchmark mean versus PCA score；
-12. model parameter count versus capability score。
-
-## 可选图表
-
-13. benchmark 删除敏感性图；
-14. 模拟实验 ROC 曲线；
-15. 经典与稳健方法的 Top-k overlap 图。
-
-## 必做表格
-
-1. 数据质量表；
-2. 模型元数据表；
-3. benchmark 覆盖率表；
-4. benchmark 相关系数表；
-5. PCA 载荷表；
-6. 模型能力画像表；
-7. 经典与稳健距离比较表；
-8. bootstrap 排名稳定性表；
-9. 模拟实验性能表。
-
-# 七、四人任务分工
-
-为了尽可能平均，四个人各自负责一个理论模块和一个实证模块，最后共同整合。
-
-## 组员 A：测量模型理论与模拟验证
+## 组员 A：Wishart 基础与风险理论
 
 ### 理论任务
 
-- 建立 benchmark 潜变量测量模型；
-- 推导 \(\Sigma_Y=\Lambda\Phi\Lambda^\top+\Psi\)；
-- 推导相关 benchmark 平均分的方差；
-- 解释评测冗余和有效信息量。
+- 推导多元正态下的 Wishart 关系；
+- 证明 \(E(S)=\Sigma\)；
+- 推导 \(\operatorname{Cov}(S_{ij},S_{kl})\)；
+- 解释逐元素无偏与整体风险的区别；
+- 推导 Frobenius 风险。
 
 ### 编程任务
 
-- 编写模拟数据生成函数；
-- 设计无污染、specialist、结构异常和污染情形；
-- 计算 PCA 恢复误差、检测 precision、recall、F1 和 AUROC；
-- 输出模拟结果图表。
+- 实现样本协方差模拟；
+- 比较不同 \(p/n\) 下的元素误差和 Frobenius 风险；
+- 输出风险随 \(p/n\) 变化的图。
 
-### 最终交付
+### 汇报重点
 
-- R/02_measurement_simulation.R；
-- report/01_theory_and_simulation.Rmd 中的理论和模拟章节；
-- 理论推导表；
-- 模拟性能表；
-- 模拟结果图。
+“无偏为什么仍然不够？”以及样本协方差在高维下为什么会失效。
 
-### 验收标准
-
-- 公式推导可以独立讲清楚；
-- 模拟参数、随机种子和评价指标完整；
-- 模拟结果能验证至少两个理论结论。
-
-## 组员 B：数据获取、清理与 benchmark 冗余
+## 组员 B：线性收缩与最优强度
 
 ### 理论任务
 
-- 解释协方差、相关矩阵和偏相关；
-- 说明 benchmark 相关性与重复测量的关系；
-- 讨论缺失值和评测条件差异对统计分析的影响。
+- 推导 \(\widehat\Sigma_\lambda=(1-\lambda)S+\lambda T\)；
+- 完成偏差—方差风险分解；
+- 推导 \(\lambda^\ast=a/(a+b)\)；
+- 比较球形、对角和常相关目标；
+- 讨论目标矩阵偏差。
 
 ### 编程任务
 
-- 下载并固定 Hugging Face 数据快照；
-- 清理模型名称、重复版本和缺失值；
-- 统一分数尺度；
-- 生成质量检查表和 benchmark 相关矩阵；
-- 计算控制参数量后的偏相关。
+- 实现固定强度网格搜索；
+- 实现数据驱动收缩强度；
+- 与 corpcor 等实现对照；
+- 输出风险—收缩强度曲线。
 
-### 最终交付
+### 汇报重点
 
-- R/01_download_and_clean.R；
-- data/raw/ 和 data/processed/；
-- tables/data_quality.csv；
-- tables/benchmark_correlations.csv；
-- 缺失值和相关矩阵图。
+“收缩为什么有效？”以及“什么时候收缩过度？”
 
-### 验收标准
-
-- 可以从原始快照重复生成处理后数据；
-- 明确说明每条清理规则；
-- 不使用 aggregate score 造成信息泄漏；
-- 每个 benchmark 的含义和评测条件有记录。
-
-## 组员 C：PCA、因子分析与能力画像
+## 组员 C：高维谱理论与模拟
 
 ### 理论任务
 
-- 推导相关矩阵特征分解；
-- 解释 PCA 与因子模型的区别；
-- 说明 \(T^2\) 和 \(Q\) 的统计含义；
-- 建立 benchmark loading 到能力维度的解释规则。
+- 解释 \(p/n\to c\) 的高维渐近；
+- 介绍 Marchenko–Pastur 谱边界的直观含义；
+- 解释最小特征值接近零和矩阵奇异；
+- 推导球形收缩对特征值的线性变换；
+- 讨论尖峰协方差和主成分恢复。
 
 ### 编程任务
 
-- 进行 PCA 和 parallel analysis；
-- 计算 PCA score、loading、\(T^2\) 和 \(Q\)；
-- 在 PCA 空间进行模型聚类；
-- 输出模型能力画像热图；
-- 比较 PCA 排名与简单平均排名。
+- 生成 identity、AR(1)、block、spiked 协方差；
+- 绘制特征值分布和谱边界；
+- 比较最小特征值、最大特征值和条件数；
+- 输出谱稳定性图表。
 
-### 最终交付
+### 汇报重点
 
-- R/03_pca_factor_profile.R；
-- tables/pca_loadings.csv；
-- tables/model_capability_scores.csv；
-- figures/pca_biplot.png；
-- figures/capability_profile_heatmap.png；
-- PCA 理论章节。
+“为什么高维问题首先表现为特征值和条件数问题？”
 
-### 验收标准
-
-- 主成分数有 parallel analysis 或解释比例依据；
-- 每个主成分的命名都有载荷支撑；
-- 聚类结果不只展示颜色，还要有稳定性或 silhouette 依据；
-- 能解释至少一个 specialist model。
-
-## 组员 D：稳健异常、排名稳定性与方法敏感性
+## 组员 D：下游影响与综合应用
 
 ### 理论任务
 
-- 推导 Mahalanobis 距离与白化变换；
-- 说明 \(\chi_p^2\) 分布的适用条件；
-- 解释经典协方差与稳健协方差的差异；
-- 说明 bootstrap 排名稳定性的含义。
+- 推导马氏距离对协方差逆矩阵的依赖；
+- 讨论 Hotelling \(T^2\) 的经典条件；
+- 解释协方差估计误差如何传播到二次型；
+- 讨论收缩估计与 LDA 的联系；
+- 明确与 Graphical LASSO 的区别。
 
 ### 编程任务
 
-- 计算经典和稳健 Mahalanobis 距离；
-- 计算 PCA \(T^2\) 和 \(Q\)；
-- 进行 benchmark 删除、分数扰动和 bootstrap 稳定性分析；
-- 输出方法比较表和稳定性图。
+- 比较普通和收缩协方差下的马氏距离；
+- 模拟 Hotelling \(T^2\) 的经验拒绝率；
+- 完成低维控制组与半真实高维实验；
+- 整理最终图表、表格和局限性。
 
-### 最终交付
+### 汇报重点
 
-- R/04_robust_distance_stability.R；
-- tables/distance_comparison.csv；
-- tables/rank_stability.csv；
-- figures/t2_q_diagnostic.png；
-- figures/rank_stability.png；
-- 方法比较和局限性章节。
+“协方差估计改进是否真的会改善下游统计推断？”
 
-### 验收标准
+# 十、30 分钟汇报结构
 
-- 至少比较经典与稳健 Mahalanobis；
-- 至少完成一种排名稳定性分析；
-- 不把异常模型直接称为错误模型；
-- 明确说明 \(\chi^2\) 阈值和 bootstrap 阈值的区别。
+建议总共 24—28 页，每页平均 1 分钟左右。
 
-## 共同任务
+1. 研究动机：为什么高维协方差值得研究；
+2. 与其他组选题的区别；
+3. 多元正态和 Wishart 基础；
+4. 样本协方差的无偏性；
+5. 协方差估计风险；
+6. 高维下的 \(p/n\) 比例；
+7. 特征值扩散；
+8. 收缩估计定义；
+9. 目标矩阵选择；
+10. 偏差—方差风险分解；
+11. 最优收缩强度；
+12. 正定性和条件数；
+13. Marchenko–Pastur 直观；
+14. 模拟设计；
+15. identity 协方差结果；
+16. AR(1) 结果；
+17. block 结构结果；
+18. spiked 结构结果；
+19. 风险比较；
+20. 特征值比较；
+21. 马氏距离应用；
+22. Hotelling \(T^2\) 应用；
+23. 半真实应用；
+24. 方法优缺点；
+25. 与 Graphical LASSO 的边界；
+26. 四人分工；
+27. 总结。
 
-四个人共同完成：
+# 十一、最终交付物
 
-- 统一变量定义；
-- 统一图表主题；
-- 交叉检查公式；
-- 互相复现代码；
-- 共同完成结论和汇报；
-- 每个人都需要能回答其他组员模块的基本问题。
+## 11.1 理论报告
 
-# 八、报告结构
+- 完整符号约定；
+- Wishart 与样本协方差推导；
+- 风险函数和最优收缩强度推导；
+- 高维谱失真的直观解释；
+- 下游二次型的误差传播讨论。
 
-## 第一章：问题背景与数据
+## 11.2 R 代码
 
-- LLM benchmark 的多维性；
-- 为什么单一排行榜不充分；
-- 数据来源和清理规则；
-- 研究问题与假设。
+- R/01_covariance_basics.R；
+- R/02_shrinkage_estimators.R；
+- R/03_spectral_simulation.R；
+- R/04_downstream_applications.R；
+- R/99_run_all.R。
 
-## 第二章：潜在能力测量理论
+## 11.3 图表
 
-- 潜变量测量模型；
-- benchmark 冗余方差推导；
-- PCA 与因子模型；
-- 理论假设与模拟设计。
+- 风险随 \(p/n\) 变化图；
+- 收缩强度—风险曲线；
+- 样本协方差和收缩协方差特征值图；
+- 条件数箱线图；
+- 马氏距离和 Hotelling \(T^2\) 经验分布图；
+- 方法比较汇总表。
 
-## 第三章：模拟实验
+# 十二、项目边界与风险控制
 
-- 数据生成机制；
-- specialist 与污染情形；
-- 方法评价指标；
-- 理论与模拟结果对照。
+1. 不把非线性收缩、稳健协方差、图模型全部展开，否则项目会失去主线；
+2. 非线性谱收缩只作为最后的理论扩展，不作为四人共同的必做内容；
+3. Graphical LASSO 只作为概念对照，不实现稀疏精度矩阵；
+4. 实践数据不超过报告篇幅的三分之一；
+5. 所有模拟固定随机种子，并报告重复次数；
+6. 区分理论最优 \(\lambda^\ast\) 与数据驱动 \(\hat\lambda\)；
+7. 不把“条件数变小”直接等同于“统计风险一定变小”，必须同时报告矩阵风险。
 
-## 第四章：真实 LLM benchmark 分析
+# 十三、参考文献方向
 
-- 数据质量；
-- benchmark 相关结构；
-- PCA 和能力画像；
-- 模型聚类；
-- 经典与稳健异常诊断。
+1. Wishart 分布与多元统计基础教材；
+2. Ledoit–Wolf 线性收缩协方差估计；
+3. Schäfer–Strimmer 大规模协方差收缩；
+4. Marchenko–Pastur 高维随机矩阵谱理论；
+5. 非线性谱收缩作为扩展阅读。
 
-## 第五章：稳定性和方法敏感性
-
-- bootstrap 排名稳定性；
-- benchmark 子集敏感性；
-- 与简单综合分数比较。
-
-## 第六章：讨论与局限
-
-- 单一 leaderboard 的局限；
-- benchmark 版本和 prompt 差异；
-- 缺失值和选择偏差；
-- 不能将评测分数解释为真实能力的完全测量；
-- 不做模型架构的因果结论。
-
-# 九、汇报结构
-
-1. 研究问题：为什么不能只看排行榜；
-2. 数据结构：模型 × benchmark 矩阵；
-3. 潜变量测量模型；
-4. 相关 benchmark 的冗余方差推导；
-5. 模拟数据与理论验证；
-6. 真实数据的 benchmark 相关矩阵；
-7. PCA 能力画像；
-8. Mahalanobis、\(T^2\) 和 \(Q\) 异常诊断；
-9. 排名稳定性与外部偏好验证；
-10. 结论：排行榜分数、能力画像和方法不确定性。
-
-汇报的核心叙事应当是：
-
-> 我们不是在重新做一个排行榜，而是在研究排行榜本身作为统计测量工具是否可靠。
-
-# 十、项目边界
-
-本项目不做以下内容：
-
-- 不训练大型语言模型；
-- 不大规模调用 API；
-- 不复现 GAT、Transformer 或复杂 agent 模型；
-- 不把 OpenAI 与 Anthropic 的系统卡数字未经校准地直接合并；
-- 不宣称某个 benchmark 能完全代表模型能力；
-- 不把统计异常等同于模型错误或安全风险。
-
-本项目要做的是：
-
-- 用可推导的多元统计模型解释 LLM 评测；
-- 用模拟数据验证理论；
-- 用真实公开 benchmark 检验理论是否近似成立；
-- 报告能力结构、评测冗余和排名稳定性。
-
-# 十一、参考资料
-
-1. Hugging Face. Accessing Benchmark Leaderboard Data. <https://huggingface.co/docs/hub/leaderboard-data-guide>
-2. OpenEvals. leaderboard-data. <https://huggingface.co/datasets/OpenEvals/leaderboard-data>
-3. OpenAI. Deep Research System Card, 2025. <https://cdn.openai.com/deep-research-system-card.pdf>
-4. Anthropic. Claude 3.7 Sonnet System Card, 2025. <https://www-cdn.anthropic.com/9ff93dfa8f445c932415d335c88852ef47f1201e.pdf>
-5. Lohrer, A., Kazempour, D., Hünemörder, M., et al. CoMadOut—a robust outlier detection algorithm based on CoMAD. Machine Learning, 2024. <https://link.springer.com/article/10.1007/s10994-024-06521-2>
-6. Heng, Q., Shen, H., and Lange, K. High-dimensional Outlier Detection via Stability, 2024. <https://arxiv.org/abs/2401.14359>
-7. Roy, S., Basu, A., and Ghosh, A. Robust Principal Component Analysis using Density Power Divergence. Journal of Machine Learning Research, 2024. <https://jmlr.org/beta/papers/v25/23-1096.html>
