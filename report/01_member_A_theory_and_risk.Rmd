@@ -1,0 +1,325 @@
+---
+title: "组员 A：Wishart 基础与样本协方差风险"
+author: "高维协方差收缩项目"
+date: "2026-10-30"
+output:
+  html_document:
+    toc: true
+    toc_float: true
+    number_sections: true
+---
+
+本报告对应项目大纲中的组员 A 模块，重点是样本协方差的理论基础、Wishart 关系、无偏性和 Frobenius 风险。收缩估计的具体方法由组员 B 负责，因此本报告先回答：普通样本协方差在高维下为什么会变得不可靠？
+
+# 研究目标
+
+本部分完成四项工作：
+
+1. 从多元正态模型说明样本协方差与 Wishart 分布的关系；
+2. 数值验证样本协方差的无偏性以及样本均值与样本协方差的独立性；
+3. 推导样本协方差的整体 Frobenius 风险；
+4. 通过改变 \(p/n\) 比例，观察矩阵风险、元素误差和奇异率如何变化。
+
+~~~{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE, message = FALSE, warning = FALSE)
+required <- c("MASS", "mvtnorm", "Matrix", "ggplot2", "dplyr", "tidyr", "purrr", "readr")
+missing <- required[!vapply(required, requireNamespace, logical(1), quietly = TRUE)]
+if (length(missing) > 0) {
+  stop("Missing packages: ", paste(missing, collapse = ", "))
+}
+source(file.path("..", "R", "01_covariance_basics.R"))
+set.seed(20261030)
+~~~
+
+# 理论推导
+
+## 多元正态与 Wishart 分布
+
+设
+
+\[
+X_1,\ldots,X_n\stackrel{\mathrm{iid}}{\sim}N_p(\mu,\Sigma).
+\]
+
+样本均值和样本协方差为
+
+\[
+\bar X=\frac{1}{n}\sum_{i=1}^n X_i,
+\qquad
+S=\frac{1}{n-1}\sum_{i=1}^n
+(X_i-\bar X)(X_i-\bar X)^\top.
+\]
+
+对中心化观测矩阵 \(X_c\)，有
+
+\[
+(n-1)S=X_c^\top X_c.
+\]
+
+在正态模型下，二次型矩阵满足
+
+\[
+(n-1)S\sim W_p(n-1,\Sigma).
+\]
+
+因此，样本协方差不是任意的随机矩阵，而是由 Wishart 分布控制的随机矩阵。与此同时，多元正态模型给出
+
+\[
+\bar X\sim N_p\left(\mu,\frac{\Sigma}{n}\right),
+\]
+
+并且
+
+\[
+\bar X\perp S.
+\]
+
+最后一个独立性结论是后续 Hotelling \(T^2\) 理论的基础。
+
+## 样本协方差的无偏性
+
+令 \(\nu=n-1\)。Wishart 分布的期望为
+
+\[
+E\{\nu S\}=\nu\Sigma.
+\]
+
+于是
+
+\[
+E(S)=\Sigma.
+\]
+
+因此，样本协方差在逐元素意义下是无偏的。然而，在高维问题中我们关心的不是单个元素的平均误差，而是整个矩阵的误差和谱性质。
+
+## 元素协方差公式
+
+正态模型下可推导：
+
+\[
+\operatorname{Cov}(S_{ij},S_{kl})
+=
+\frac{1}{n-1}
+\left(\Sigma_{ik}\Sigma_{jl}+\Sigma_{il}\Sigma_{jk}\right).
+\]
+
+取 \(k=i,l=j\)，得到
+
+\[
+\operatorname{Var}(S_{ij})
+=
+\frac{1}{n-1}
+\left(\Sigma_{ii}\Sigma_{jj}+\Sigma_{ij}^2\right).
+\]
+
+这个公式说明了三点：
+
+1. \(n\) 越大，单个元素的估计波动越小；
+2. 总体方差和协方差越大，估计波动越大；
+3. 不同元素的估计误差相互相关，不能把矩阵估计理解成许多彼此独立的标量估计。
+
+## Frobenius 风险推导
+
+定义 Frobenius 损失：
+
+\[
+L_F(S,\Sigma)=\|S-\Sigma\|_F^2
+=\sum_{i=1}^p\sum_{j=1}^p(S_{ij}-\Sigma_{ij})^2.
+\]
+
+由于 \(E(S_{ij})=\Sigma_{ij}\)，有
+
+\[
+E\{(S_{ij}-\Sigma_{ij})^2\}
+=\operatorname{Var}(S_{ij}).
+\]
+
+因此
+
+\[
+\begin{aligned}
+R_F(S)
+&=E\|S-\Sigma\|_F^2\\
+&=\sum_{i,j}\operatorname{Var}(S_{ij})\\
+&=\frac{1}{n-1}
+\sum_{i,j}
+\left(\Sigma_{ii}\Sigma_{jj}+\Sigma_{ij}^2\right)\\
+&=\frac{(\operatorname{tr}\Sigma)^2+
+\operatorname{tr}(\Sigma^2)}{n-1}.
+\end{aligned}
+\]
+
+这就是样本协方差的理论 Frobenius 风险。
+
+特别地，当 \(\Sigma=I_p\) 时：
+
+\[
+\operatorname{tr}(\Sigma)=p,
+\qquad
+\operatorname{tr}(\Sigma^2)=p,
+\]
+
+因此
+
+\[
+\boxed{
+R_F(S)=\frac{p(p+1)}{n-1}.
+}
+\]
+
+这条公式直接揭示了高维问题：当 \(p\) 增加时，风险大约按 \(p^2/n\) 增长，而不是只按 \(1/n\) 下降。
+
+# Wishart 数值验证
+
+下面用一个三维相关正态模型检查无偏性和独立性。
+
+~~~{r wishart-check}
+checks <- run_wishart_checks(reps = 2000, n = 120, seed = 20261030)
+
+knitr::kable(
+  data.frame(
+    quantity = names(checks$target_covariance),
+    target = unname(checks$target_covariance),
+    empirical = unname(checks$empirical_covariance),
+    bias = unname(checks$bias)
+  ),
+  digits = 4,
+  caption = "Empirical check of covariance unbiasedness"
+)
+~~~
+
+~~~{r mean-covariance-independence}
+knitr::kable(
+  data.frame(
+    quantity = names(checks$mean_covariance_correlations),
+    empirical_correlation = unname(checks$mean_covariance_correlations)
+  ),
+  digits = 4,
+  caption = "Empirical correlations between sample mean and sample covariance entries"
+)
+~~~
+
+经验结果应当呈现：
+
+- \(S_{11},S_{12},S_{22}\) 的模拟均值接近对应的总体协方差元素；
+- 样本均值与样本协方差元素的经验相关接近 0；
+- 有限次模拟不会得到精确的零，而是围绕零随机波动。
+
+# 不同 \(p/n\) 下的风险模拟
+
+## 模拟设置
+
+使用项目计划中的五个维度—样本量组合：
+
+| Regime | \(n\) | \(p\) | \(p/n\) |
+|---|---:|---:|---:|
+| low | 500 | 10 | 0.02 |
+| moderate | 200 | 50 | 0.25 |
+| high | 200 | 150 | 0.75 |
+| near_singular | 150 | 140 | 0.93 |
+| singular | 100 | 200 | 2.00 |
+
+同时考虑：
+
+- identity 协方差：突出高维比例本身的影响；
+- AR(1) 协方差：检验存在相关结构时的风险变化。
+
+正式报告建议使用 500 次重复；本地预览使用 100 次重复以控制运行时间。
+
+~~~{r run-risk-simulation, cache=TRUE}
+risk_results <- run_covariance_risk_simulation(
+  reps = 100,
+  seed = 20261030
+)
+risk_summary <- summarise_risk_results(risk_results)
+
+knitr::kable(
+  risk_summary |>
+    dplyr::select(
+      regime, structure, p_over_n, frobenius_risk_mean,
+      theoretical_risk, risk_ratio, smallest_eigenvalue_mean,
+      condition_number_median, singular_rate
+    ),
+  digits = 3,
+  caption = "Sample covariance risk and spectral summary"
+)
+~~~
+
+## Frobenius 风险
+
+~~~{r risk-plot, fig.width=9, fig.height=6}
+plot_frobenius_risk(risk_summary, structure_name = "identity")
+~~~
+
+虚线是理论风险
+
+\[
+\frac{p(p+1)}{n-1}
+\]
+
+在 identity 协方差下的取值。随着 \(p/n\) 增大，经验风险整体上升；当 \(p\) 接近 \(n\) 时，样本协方差不仅风险大，而且其逆矩阵的计算会变得脆弱。
+
+## 奇异率
+
+~~~{r singularity-plot, fig.width=9, fig.height=6}
+plot_singularity_rate(risk_summary)
+~~~
+
+当 \(p>n-1\) 时，样本协方差的秩最多为 \(n-1\)，因此必然奇异。\(p/n\) 接近 1 时，即使 \(p<n\)，最小特征值也可能非常接近零，数值上近似奇异。
+
+## 相关结构下的结果
+
+~~~{r ar1-table}
+risk_summary |>
+  dplyr::filter(structure == "ar1") |>
+  dplyr::select(
+    regime, p_over_n, frobenius_risk_mean,
+    theoretical_risk, element_mse_mean,
+    largest_eigenvalue_mean, smallest_eigenvalue_mean
+  ) |>
+  knitr::kable(
+    digits = 3,
+    caption = "Risk summary under AR(1) covariance"
+  )
+~~~
+
+AR(1) 结构下理论风险为
+
+\[
+\frac{(\operatorname{tr}\Sigma)^2+\operatorname{tr}(\Sigma^2)}{n-1}.
+\]
+
+与 identity 情形相比，相关性会改变总体协方差的谱结构和风险水平，但“\(p/n\) 增大导致估计困难”的趋势仍然存在。
+
+# 组员 A 的阶段性结论
+
+## 结论一：无偏性不能代表整体稳定
+
+样本协方差满足 \(E(S)=\Sigma\)，但 Frobenius 风险随维数增加得很快。高维下需要同时估计大量方差和协方差元素，整体误差可能很大。
+
+## 结论二：高维风险具有明确的矩阵来源
+
+理论风险
+
+\[
+R_F(S)
+=
+\frac{(\operatorname{tr}\Sigma)^2+
+\operatorname{tr}(\Sigma^2)}{n-1}
+\]
+
+把总体尺度、相关结构和样本量联系起来。风险不是抽象的“高维魔法”，而是可以由 Wishart 协方差公式直接推导。
+
+## 结论三：\(p/n\) 决定谱稳定性
+
+当 \(p/n\) 接近 1 时，最小特征值容易接近零；当 \(p>n-1\) 时，样本协方差必然奇异。这解释了为什么后续需要收缩估计来提高正定性和逆矩阵稳定性。
+
+## 与组员 B、C、D 的衔接
+
+- 组员 A 给出普通样本协方差的风险基线；
+- 组员 B 在此基础上推导线性收缩和最优收缩强度；
+- 组员 C 研究高维谱边界和特征值扩散；
+- 组员 D 检查协方差估计改进是否能改善马氏距离和 Hotelling \(T^2\)。
+
+因此，A 部分的核心不是提前证明收缩方法一定更好，而是先准确描述普通样本协方差在什么条件下开始失效。
+
