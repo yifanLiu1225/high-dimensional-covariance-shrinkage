@@ -1,0 +1,286 @@
+---
+title: "组员 B：线性收缩与最优强度"
+author: "高维协方差收缩项目"
+date: "2026-11-03"
+output:
+  html_document:
+    toc: true
+    toc_float: true
+    number_sections: true
+---
+
+本报告对应项目大纲中的组员 B 模块。在组员 A 给出的样本协方差风险基础上，研究线性收缩估计、最优收缩强度以及目标矩阵的选择，重点回答：收缩为什么有效？什么时候会收缩过度？
+
+# 研究目标
+
+本部分完成四项工作：
+
+1. 推导线性收缩估计及其偏差—方差风险分解；
+2. 推导固定目标下的最优收缩强度，比较球形、对角和常相关目标；
+3. 实现固定强度网格搜索和数据驱动强度，并与 `corpcor` 比较；
+4. 通过风险曲线说明目标偏差与过度收缩的影响。
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE, message = FALSE, warning = FALSE)
+required <- c("ggplot2", "corpcor")
+missing <- required[!vapply(required, requireNamespace, logical(1), quietly = TRUE)]
+if (length(missing) > 0) {
+  stop("Missing packages: ", paste(missing, collapse = ", "))
+}
+source(file.path("..", "R", "02_linear_shrinkage.R"), encoding = "UTF-8")
+```
+
+# 理论推导
+
+## 线性收缩估计
+
+沿用组员 A 的多元正态模型，令 \(S\) 为分母取 \(n-1\) 的样本协方差，满足 \(E(S)=\Sigma\)。令 \(T\) 为具有简单结构的目标矩阵。
+
+为了兼顾样本信息与目标结构，考虑加权平方距离：
+
+\[
+\min_C\; (1-\lambda)\|C-S\|_F^2
++\lambda\|C-T\|_F^2,\qquad 0\leq\lambda\leq1.
+\]
+
+对 \(C\) 求导并令其为零，得到
+
+\[
+2(1-\lambda)(C-S)+2\lambda(C-T)=0.
+\]
+
+因此
+
+\[
+\boxed{\widehat\Sigma_\lambda=(1-\lambda)S+\lambda T.}
+\]
+
+其中，\(\lambda=0\) 表示完全使用样本协方差，\(\lambda=1\) 表示完全使用目标矩阵。收缩强度越大，对简单结构的依赖越强。
+
+## 固定目标下的偏差—方差分解
+
+先假设 \(T\) 是不随样本变化的固定矩阵，\(\lambda\) 也是固定常数。定义
+
+\[
+a=E\|S-\Sigma\|_F^2
+=\frac{(\operatorname{tr}\Sigma)^2+\operatorname{tr}(\Sigma^2)}{n-1},
+\qquad b=\|T-\Sigma\|_F^2.
+\]
+
+其中，\(a\) 表示样本协方差的方差风险，\(b\) 表示目标矩阵与真实协方差之间的平方距离。
+
+收缩估计的偏差为
+
+\[
+E(\widehat\Sigma_\lambda)-\Sigma=\lambda(T-\Sigma),
+\]
+
+因此平方偏差为 \(\lambda^2b\)。由于目标固定，各元素方差之和为
+
+\[
+\sum_{i,j}\operatorname{Var}(\widehat\Sigma_{\lambda,ij})
+=(1-\lambda)^2\sum_{i,j}\operatorname{Var}(S_{ij})
+=(1-\lambda)^2a.
+\]
+
+两者相加，得到
+
+\[
+\boxed{
+R_F(\widehat\Sigma_\lambda)
+=E\|\widehat\Sigma_\lambda-\Sigma\|_F^2
+=(1-\lambda)^2a+\lambda^2b.
+}
+\]
+
+这就是矩阵估计的均方误差分解：增加收缩强度会降低方差，但也会放大目标偏差。这里的 Frobenius 风险是所有元素均方误差的总和；再除以 \(p^2\)，才是平均每个元素的均方误差。
+
+## 最优收缩强度
+
+对风险求导：
+
+\[
+R_F'(\lambda)=-2a+2(a+b)\lambda.
+\]
+
+当 \(a+b>0\) 时，二阶导数 \(2(a+b)>0\)，因此最小风险对应
+
+\[
+\boxed{\lambda^*=\frac{a}{a+b}},\qquad
+R_F(\widehat\Sigma_{\lambda^*})=\frac{ab}{a+b}.
+\]
+
+这说明：样本协方差越不稳定，即 \(a\) 越大，应当收缩得越多；目标与真实协方差偏离越大，即 \(b\) 越大，应当收缩得越少。该公式需要真实总体信息，在模拟中可以计算，实际数据分析中则需要估计收缩强度。
+
+## 三种目标矩阵与目标偏差
+
+代码采用以下三种目标，其中 \(v_i=S_{ii}\)，\(\bar v=\operatorname{tr}(S)/p\)：
+
+| 目标 | 定义 | 保留的信息与可能的偏差 |
+|---|---|---|
+| 球形目标 | \(T=\bar v I_p\) | 将方差拉向同一水平，协方差拉向零；方差差异或相关性较强时，偏差可能较大。 |
+| 对角目标 | \(T=\operatorname{diag}(S)\) | 保留各变量的样本方差，将协方差拉向零；会损失真实相关关系。 |
+| 常相关目标 | \(T_{ii}=v_i\)，\(T_{ij}=\bar\rho\sqrt{v_iv_j}\;(i\ne j)\) | 保留样本方差，将相关系数拉向共同水平；相关结构差异较大时会产生偏差。 |
+
+常相关目标中的平均相关系数为
+
+\[
+\bar\rho=\frac{2}{p(p-1)}\sum_{i<j}\frac{S_{ij}}{\sqrt{S_{ii}S_{jj}}}.
+\]
+
+三种目标都从样本中估计，因此实际目标 \(T=T(S)\) 也是随机的。此时不能直接套用固定目标的两项分解。对固定 \(\lambda\)，令
+
+\[
+b_T=E\|T-\Sigma\|_F^2,\qquad
+c=E\langle S-\Sigma,T-\Sigma\rangle_F,
+\]
+
+其中 \(\langle A,B\rangle_F=\sum_{i,j}A_{ij}B_{ij}\)，则
+
+\[
+R_F(\widehat\Sigma_\lambda)
+=(1-\lambda)^2a+\lambda^2b_T+2\lambda(1-\lambda)c.
+\]
+
+这里的 \(b_T\) 同时包含目标自身的方差和平方偏差，\(c\) 则反映样本协方差与目标估计误差的关联。下面的偏差—方差图使用固定总体目标作理论演示；实际风险比较使用样本目标，并通过重复模拟计算风险。
+
+# 风险模拟与方法比较
+
+## 模拟设置
+
+沿用以下五个维度—样本量组合：
+
+| Regime | \(n\) | \(p\) | \(p/n\) |
+|---|---:|---:|---:|
+| low | 500 | 10 | 0.02 |
+| moderate | 200 | 50 | 0.25 |
+| high | 200 | 150 | 0.75 |
+| near_singular | 150 | 140 | 0.93 |
+| singular | 100 | 200 | 2.00 |
+
+考虑四种总体协方差结构：
+
+- identity：\(\Sigma=I_p\)；
+- AR(1)：\(\Sigma_{ij}=0.6^{|i-j|}\)；
+- block：每组 10 个变量，方差为 1，组内协方差为 0.7，组间为 0.1；
+- spiked：两个较大的特征值为 6 和 3，其余特征值为 1。
+
+每个组合重复 500 次，各方法使用同一份模拟样本进行比较。固定强度网格为 \(0,0.01,\ldots,1\)。本报告读取 B 代码已经生成的正式结果，不重复运行模拟。文件放在项目的 `report/` 目录，与 A 的报告并列。
+
+```{r read-shrinkage-results}
+table_dir <- file.path("..", "tables", "member_B")
+risk_summary <- read.csv(file.path(table_dir, "shrinkage_risk_summary.csv"))
+grid_results <- read.csv(file.path(table_dir, "shrinkage_intensity_grid.csv"))
+bias_variance <- read.csv(file.path(table_dir, "shrinkage_bias_variance.csv"))
+```
+
+## 固定目标的偏差—方差权衡
+
+下面取 AR(1) 结构、\(n=200,p=50\)，并以总体平均方差构造固定球形目标
+
+\[
+T_0=\frac{\operatorname{tr}(\Sigma)}pI_p.
+\]
+
+```{r bias-variance-plot, fig.width=9, fig.height=6}
+plot_shrinkage_bias_variance(bias_variance)
+```
+
+该设定下，\(a\approx13.088\)，\(b\approx54.492\)，最优强度 \(\lambda^*\approx0.194\)。随着收缩增加，方差项下降，平方偏差项上升，总风险先下降后上升。图中虚线标记最优强度，说明完全收缩到目标并不一定最好。
+
+## 固定强度网格搜索
+
+在每次模拟中，固定一个候选 \(\lambda\)，用样本构造三种目标，并计算
+
+\[
+\|\widehat\Sigma_\lambda-\Sigma\|_F^2.
+\]
+
+对 500 次损失取平均，得到各候选强度的经验风险。下图展示 \(n=200,p=150\) 时的结果；水平虚线表示不收缩的样本协方差风险。
+
+```{r risk-intensity-plot, fig.width=9, fig.height=6}
+plot_shrinkage_risk_curve(grid_results)
+```
+
+```{r best-grid-intensity}
+best_grid <- subset(
+  grid_results, regime == "high" & lambda == lambda_grid_best,
+  select = c(structure, target, lambda_grid_best, frobenius_risk_mean)
+)
+knitr::kable(
+  best_grid, row.names = FALSE, digits = 3,
+  caption = "Best fixed intensity on the simulation grid (n = 200, p = 150)"
+)
+```
+
+identity 结构下，三种目标的网格最优强度均为 1。AR(1) 结构下，最优强度约为 0.40—0.42；block 结构下，球形与对角目标为 0.12，常相关目标为 0.19。目标适合程度不同，最优强度也不同。
+
+这里的网格最小点使用已知的 \(\Sigma\) 和同一批模拟结果计算，只作为模拟参照，不是实际数据中可直接使用的选择方法，也不是独立测试集上的成绩。
+
+## 数据驱动强度与 corpcor 对照
+
+实际应用中不能使用真实 \(\Sigma\)，因此代码采用以下方法：
+
+| 方法 | 强度的确定方式 |
+|---|---|
+| `sample_covariance` | 不收缩，作为风险基线。 |
+| `spherical_gaussian` | 利用正态模型的样本协方差矩公式估计球形目标的收缩强度，并截断到 \([0,1]\)。 |
+| `diagonal_gaussian` | 利用同样的矩公式估计对角目标的收缩强度，并截断到 \([0,1]\)。 |
+| `constant_correlation_cv` | 五折交叉验证：在训练集构造目标，以验证集协方差为参照，选择平均平方距离最小的强度。 |
+| `corpcor_default` | 使用 `corpcor::cov.shrink()` 的默认数据驱动估计。 |
+
+球形和对角方法的分子估计考虑了 \(S\) 与样本目标之间的相关项，分母使用 \(\|S-T\|_F^2\)。常相关方法选好强度后，在全样本上重新构造目标；由于交叉验证的训练样本量较小，它不保证得到全样本的精确最优强度。
+
+`corpcor` 默认分别对相关系数和方差进行收缩，因此它不等同于上述单一强度的实现。本部分比较最终协方差估计的风险；下表中该方法的 `lambda_mean` 表示相关系数收缩强度的平均值。
+
+```{r method-comparison-plot, fig.width=9, fig.height=6}
+plot_shrinkage_comparison(risk_summary)
+```
+
+图中纵轴采用对数刻度，以同时展示不同数量级的风险。各点对应不同的 \((n,p)\) 组合，不能把风险差异全部解释为 \(p/n\) 单独造成的变化。
+
+```{r method-risk-table}
+high_summary <- subset(
+  risk_summary, regime == "high",
+  select = c(structure, method, lambda_mean,
+             frobenius_risk_mean, risk_reduction_percent)
+)
+high_summary <- high_summary[order(high_summary$structure, high_summary$method), ]
+knitr::kable(
+  high_summary, row.names = FALSE, digits = 3,
+  caption = "Data-driven shrinkage risk comparison (n = 200, p = 150)"
+)
+```
+
+其中，风险降低百分比定义为
+
+\[
+100\left(1-\frac{\widehat R_F(\widehat\Sigma)}{\widehat R_F(S)}\right).
+\]
+
+在这一高维设定下，identity 结构中球形收缩的风险约为 0.019，样本协方差约为 113.906；AR(1) 结构中，四种收缩方法的风险约为 67—69，低于样本协方差的 114.715。block 结构中，常相关方法的风险约为 97.660，低于球形与对角方法的约 104，但并未消除真实分组结构与常相关目标之间的差异。
+
+这些结果说明，收缩可以显著减少估计波动，但不同结构下的方法排序会变化，不能据此认定某一种目标始终最好。
+
+# 组员 B 的阶段性结论
+
+## 结论一：收缩通过偏差换取方差下降
+
+样本协方差虽然无偏，但在高维下方差风险较大。适度引入简单目标带来的偏差，可以换取更明显的方差下降，从而降低整体均方误差。
+
+## 结论二：收缩强度取决于目标是否合适
+
+固定目标下，\(\lambda^*=a/(a+b)\) 将样本不稳定程度与目标偏差联系起来。目标越接近真实结构，可接受的收缩越强；目标偏差越大，过强收缩造成的损失越明显。实际目标从样本估计时，还需要考虑目标自身的随机性。
+
+## 结论三：超过最优强度后，继续收缩会增加风险
+
+固定目标下，当 \(\lambda>\lambda^*\) 时，风险开始回升，但不一定已经差于不收缩。由
+
+\[
+R_F(\widehat\Sigma_\lambda)-R_F(S)
+=\lambda\{(a+b)\lambda-2a\}
+\]
+
+可知，在 \(0\leq\lambda\leq1\) 内，只有当 \(\lambda>2\lambda^*\) 时，风险才高于样本协方差。实际样本目标与数据驱动强度的表现应依据模拟或验证结果判断。
+
+因此，B 部分的核心结论是：收缩有效的原因在于减少估计波动，而收缩过度的原因在于目标偏差的代价超过了方差下降的收益。
