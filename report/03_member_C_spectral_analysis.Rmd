@@ -1,0 +1,407 @@
+---
+title: "高维协方差的谱失真与线性收缩：C 模块完整报告"
+author: "MillyChai · 多元统计分析课程项目 · 个人验收版"
+date: "2026-11-03"
+output:
+  html_document:
+    toc: true
+    toc_float: true
+    number_sections: true
+    self_contained: true
+    theme: readable
+    mathjax: default
+---
+
+```{r setup,include=FALSE}
+knitr::opts_chunk$set(echo=FALSE,warning=FALSE,message=FALSE)
+root <- if(file.exists('tables/member_C/summary_long.csv')) '.' else '..'
+summ <- read.csv(file.path(root,'tables/member_C/summary_long.csv'))
+raw <- read.csv(gzfile(file.path(root,'tables/member_C/replicate_metrics.csv.gz')))
+paired <- read.csv(file.path(root,'tables/member_C/paired_differences.csv'))
+refs <- read.csv(file.path(root,'tables/member_C/mp_reference.csv'))
+B <- unique(summ$reps)
+stopifnot(length(B)==1L,B>=500)
+show_metric <- function(st,metric,methods=c('sample','sphere_auto','diag_auto','sphere_100')) {
+  d<-summ[summ$structure==st&summ$metric==metric&summ$method%in%methods,]
+  d<-d[order(match(d$regime,c('low','moderate','high','near_singular','singular')),match(d$method,methods)),]
+  d<-d[,c('regime','method','mean','sd','mcse','ci_lower','ci_upper','n_finite','n_infinite')]
+  knitr::kable(d,digits=4,row.names=FALSE)
+}
+num <- function(r,st,m,metric,digits=3) {
+  x<-summ$mean[summ$regime==r&summ$structure==st&summ$method==m&summ$metric==metric]
+  formatC(x,digits=digits,format='f')
+}
+fig <- function(name) knitr::include_graphics(file.path(root,'figures/member_C',paste0(name,'.png')))
+```
+
+# 摘要与模块边界
+
+本模块回答：**为什么高维协方差估计首先表现为特征值和条件数问题？**
+
+在总体协方差为单位矩阵时，真实特征值全为 1，但有限样本的高维谱仍会扩散。维数与自由度之比接近 1 时，最小特征值接近零，求逆对扰动高度敏感；维数超过中心化样本的自由度时，样本协方差必然奇异。球形线性收缩通过对所有样本特征值做同一个仿射变换，提高最小特征值、压缩谱宽度，并在正强度下恢复正定性。
+
+正式实验使用计划书指定的 5 组 $(n,p)$、4 种协方差结构，每条件 `r B` 次独立重复，共 `r 20*B` 份样本。同一份样本比较 6 种估计方式，共 `r nrow(raw)` 条估计记录。结果同时检查 Frobenius 损失和谱范数误差，避免将良好的数值条件误读成小的统计风险。尖峰模型额外评价主方向和前二维主子空间。球形收缩在 $0\le\lambda<1$ 时保留特征向量，因此不会改善仅依赖主方向的恢复指标；在 $\lambda=1$ 时谱完全退化，主方向不可识别。
+
+本模块提供理论、代码、正式实验、原始谱、图表和可重建报告。汇报 PPT 单独交付，不随仓库提交。A 的 Wishart 与风险理论、B 的最优强度研究、D 的二次型应用只作为衔接背景，不冒充本模块的独立研究成果。
+
+# 符号、模型与高维渐近
+
+## 符号表
+
+|符号|含义|
+|:---|:---|
+|$n,p$|样本量、变量维数|
+|$\nu=n-1$|中心化后的自由度|
+|$X_1,\ldots,X_n$|独立同分布的 $N_p(0,\Sigma)$ 样本|
+|$S$|以 $n-1$ 为分母的中心化样本协方差|
+|$d_1\ge\cdots\ge d_p$|$S$ 的有序特征值|
+|$\tau_1\ge\cdots\ge\tau_p$|总体协方差的有序特征值|
+|$c_n=p/n,\ c_\nu=p/(n-1)$|名义维样比、与本实验归一化对应的比例|
+|$\mu=\operatorname{tr}(S)/p$|样本平均方差，是随机量|
+|$\lambda$|收缩强度，取值 $[0,1]$|
+|$\kappa_2(A)$|正定对称矩阵的二范数条件数|
+
+定义
+
+$$
+S=\frac1{n-1}\sum_{i=1}^n(X_i-\bar X)(X_i-\bar X)^\top.
+$$
+
+经典渐近固定 $p$ 而令 $n\to\infty$，各个样本特征值可趋近总体特征值。高维渐近令 $p,n\to\infty$ 且 $p/(n-1)\to c\in(0,\infty)$，噪声累积不会因单个元素的估计越来越精确而消失。计划书第五部分先讨论 $c<1$，其模拟设计还包括 $c>1$，本报告分别处理两种情形。
+
+正态模型下 $\nu S\sim W_p(\nu,\Sigma)$。特别地，$\Sigma=I$ 时，$S$ 与 $\nu^{-1}Z^\top Z$ 同分布，其中 $Z$ 是 $\nu\times p$ 的独立标准正态矩阵。因此，有限样本理论曲线使用 $c_\nu=p/(n-1)$，而表格同时保留计划书中的 $p/n$。两者在高维极限相同，但有限样本中不能不加说明地混用。
+
+## 无偏与谱失真的差别
+
+$E(S)=\Sigma$ 是矩阵元素平均意义下的结论。特征值是矩阵元素的非线性函数，一般没有 $E[d_j(S)]=\tau_j$。对任意单位向量 $v$，有 $v^\top E(S)v=v^\top\Sigma v$，但 $E\max_v v^\top Sv$ 一般不等于 $\max_v E[v^\top Sv]$。最大化会选择样本中被噪声放大的方向，最小化则会选择被压低的方向。
+
+在单位总体下，A 的精确风险公式还能提供一个简短的验证：
+
+$$
+\frac1p E\|S-I_p\|_F^2=\frac{p+1}{n-1}\longrightarrow c.
+$$
+
+因为 $\|S-I\|_F^2=\sum_j(d_j-1)^2$，所以平均每个特征值的平方偏离在高维极限中不会消失。这给 MP 谱扩散提供了与课程知识直接相连的解释。无偏性约束平均谱中心，并不阻止谱宽度增大。
+
+# Marchenko–Pastur 定律与奇异性
+
+## 定律的使用范围
+
+本报告使用单位总体、独立标准正态样本的 MP 定律情形。这些假设足以覆盖本实验；更广泛的非正态版本需要另外检查矩条件、独立性与归一化。这里陈述定律和统计含义，不声称给出完整随机矩阵证明。
+
+定义经验谱分布
+
+$$
+F_p(x)=\frac1p\sum_{j=1}^p\mathbf1\{d_j\le x\}.
+$$
+
+当 $p/\nu\to c>0$，它收敛到
+
+$$
+dF_c(x)=\left(1-\frac1c\right)_+\delta_0(dx)+f_c(x)\,dx,
+$$
+
+$$
+f_c(x)=\frac{\sqrt{(b_c-x)(x-a_c)}}{2\pi c x}\,
+\mathbf1_{(a_c,b_c)}(x),\qquad
+ a_c=(1-\sqrt c)^2,\quad b_c=(1+\sqrt c)^2.
+$$
+
+$\delta_0$ 是零点处的离散质量，不是普通密度的峰。连续密度的积分为 $\min(1,1/c)$，零点质量补足到 1。MP 定律描述谱的整体分布。高斯模型下的极端特征值还满足相应边缘收敛结论，但有限样本的特征值仍可能落到渐近边界之外，不能把边界当作保证覆盖所有特征值的置信区间。
+
+- $0<c<1$：连续支撑下端为正，极限谱宽度为 $b_c-a_c=4\sqrt c$。
+- $c\uparrow1$：$a_c\downarrow0$，即使尚未奇异也可能极度病态。
+- $c=1$：下端为 0，但极限零点原子质量为 0。是否在有限样本中恰好奇异取决于 $p$ 与 $n-1$ 的关系。
+- $c>1$：零点质量为 $1-1/c$，$a_c>0$ 是**非零连续谱**的下端，不是整个矩阵的最小特征值。
+
+## 从秩和求逆解释高维不稳定
+
+令 $X_c$ 为按列中心化的 $n\times p$ 数据矩阵，则
+
+$$
+S=\nu^{-1}X_c^\top X_c,\qquad
+\operatorname{rank}(S)\le\min(p,n-1).
+$$
+
+对正定总体下的连续高斯样本，上式取等号几乎处处成立。若 $p>n-1$，零特征值恰好有 $p-(n-1)$ 个。本项目奇异组合 $n=100,p=200$ 中应有 101 个零特征值，比例为 0.505。
+
+对正定矩阵，谱分解 $A=U\operatorname{diag}(d_j)U^\top$ 给出
+
+$$
+A^{-1}=U\operatorname{diag}(d_j^{-1})U^\top,\quad
+\|A^{-1}\|_2=d_p^{-1},\quad
+\kappa_2(A)=\frac{d_1}{d_p}.
+$$
+
+对扰动 $E$，若 $\|A^{-1}E\|_2<1$，由逆矩阵恒等式和 Neumann 级数有
+
+$$
+\|(A+E)^{-1}-A^{-1}\|_2
+\le \frac{\|A^{-1}\|_2^2\|E\|_2}{1-\|A^{-1}E\|_2}.
+$$
+
+因此小特征值会通过求倒数放大估计误差。单位总体且 $c<1$ 时，条件数的渐近代理为
+
+$$
+\kappa_{\mathrm{MP}}=\frac{(1+\sqrt c)^2}{(1-\sqrt c)^2}.
+$$
+
+```{r reference-table}
+knitr::kable(refs,digits=5,row.names=FALSE,caption='单位总体的 MP 参考值。c_df=p/(n-1)，边界是渐近参考。')
+```
+
+# 球形收缩的谱变换与条件数
+
+## 特征值公式的完整推导
+
+设 $S=U D U^\top$，$D=\operatorname{diag}(d_1,\ldots,d_p)$。由于 $UU^\top=I$，
+
+$$
+\begin{aligned}
+\widehat\Sigma_\lambda
+&=(1-\lambda)S+\lambda\mu I\\
+&=U\{(1-\lambda)D+\lambda\mu I\}U^\top.
+\end{aligned}
+$$
+
+所以
+
+$$
+\boxed{\widehat d_j=(1-\lambda)d_j+\lambda\mu.}
+$$
+
+因为 $\mu$ 位于样本最小和最大特征值之间，当 $\lambda\ge0$ 时极端特征值向中间移动。谱宽度严格满足
+
+$$
+\widehat d_1-\widehat d_p=(1-\lambda)(d_1-d_p).
+$$
+
+$\operatorname{tr}(\widehat\Sigma_\lambda)=\operatorname{tr}(S)$，即球形收缩保留样本总方差。$\mu>0,\lambda>0$ 时，$\widehat d_p\ge\lambda\mu>0$，即使原矩阵奇异也恢复正定。
+
+对于原来正定的样本协方差，记 $a=d_1,b=d_p$，则
+
+$$
+\kappa(\lambda)=\frac{(1-\lambda)a+\lambda\mu}{(1-\lambda)b+\lambda\mu},
+\qquad
+\kappa'(\lambda)=\frac{\mu(b-a)}{\{(1-\lambda)b+\lambda\mu\}^2}\le0.
+$$
+
+当 $a>b,\mu>0$ 时严格下降。$\lambda=1$ 时所有特征值都等于 $\mu$，条件数等于 1。对原矩阵奇异的情形，$\lambda=0$ 时条件数为 $\infty$，任意正强度都产生有限条件数。
+
+## 限制与对角目标
+
+上述仿射特征值公式只适用于球形目标。对角目标 $T=\operatorname{diag}(S)$ 一般不与 $S$ 交换，故既可能改变特征值，也可能改变特征向量，代码为其重新做特征分解。其正强度在样本方差均为正时仍保证正定，但不把球形目标的精确条件数单调结论直接套给它。
+
+条件数等于 1 也不代表估计正确：当真实 $\Sigma$ 具有强相关或尖峰时，$\mu I$ 丢失结构。正定性、条件数、Frobenius 风险、谱误差和方向恢复分别回答不同问题，需要一起看。
+
+# 尖峰协方差与主成分恢复
+
+模型采用与 A/B 一致的
+
+$$
+\Sigma=V\operatorname{diag}(6,3,1,\ldots,1)V^\top.
+$$
+
+其中 $V$ 是固定正交矩阵，按维数固定种子构造。抽样使用单独的随机流，避免模型构造重设种子造成伪重复。
+
+## 样本尖峰与方向误差
+
+在噪声特征值为 1、有限个单重尖峰且 $c\in(0,1)$ 的高斯高维模型下，人口尖峰 $\alpha>1+\sqrt c$ 对应的样本特征值极限为
+
+$$
+\rho(\alpha)=\alpha\left(1+\frac c{\alpha-1}\right),
+$$
+
+主方向的平方内积极限为
+
+$$
+|\widehat v^\top v|^2\longrightarrow
+\frac{1-c/(\alpha-1)^2}{1+c/(\alpha-1)}.
+$$
+
+若 $1<\alpha\le1+\sqrt c$，方向平方内积趋于 0，样本尖峰不能与噪声边缘分离。这是高维 PCA 的相变。此处采用 Paul (2007) 的定理范围，图中只在 $c_\nu<1$ 的四组画渐近参考点，$c_\nu>1$ 组只报告模拟，不以同一文献的上述定理作未经说明的外推。
+
+本设计中的 6 和 3 均超过五组的临界值 $1+\sqrt{c_\nu}$，因此正式模拟验证的是**强尖峰的有限样本恢复质量及其随维样比的变化**，不声称这五组实验本身验证了阈值两侧的相变。
+
+## 球形收缩为何不能恢复新的主方向
+
+对 $0\le\lambda<1$，函数 $d\mapsto(1-\lambda)d+\lambda\mu$ 严格递增，保留特征值顺序和对应特征向量。若前两个特征值单重，其主方向及前二维主子空间与样本协方差完全相同。因此方向平方内积、主子空间投影误差也完全相同。
+
+$\lambda=1$ 时所有方向均为特征向量，协方差矩阵本身不再识别第一、第二主方向。代码将此时的方向指标记为 NA，而不把某次特征分解随意返回的坐标轴当成有意义的恢复结果。数据驱动强度若恰好截断为 1，同样处理。
+
+数值指标采用
+
+$$
+A_j=|\widehat v_j^\top v_j|^2,\qquad
+L_{\mathrm{sub}}=\|\widehat V_2\widehat V_2^\top-V_2V_2^\top\|_F^2
+=4-2\|\widehat V_2^\top V_2\|_F^2.
+$$
+
+平方内积消除特征向量正负号任意性，投影误差消除子空间内部基的选择。$A_j\in[0,1]$，越大越好；$L_{\mathrm{sub}}\in[0,4]$，越小越好。对角收缩可能改变方向，但本实验结果不保证其方向恢复一定更好。
+
+# 模拟设计与估计方法
+
+## 因素、随机数与数据留存
+
+```{r design}
+knitr::kable(refs[,c('regime','n','p','c_n','c_df')],digits=4,row.names=FALSE)
+```
+
+四种总体结构：
+
+1. Identity：$\Sigma=I_p$。
+2. AR(1)：$\Sigma_{ij}=0.6^{|i-j|}$。
+3. Block：每 10 个变量为一组，组内相关 0.7，组间相关 0.1，对角为 1。本设计维数均为 10 的倍数。构造可写成 $0.3I+0.6\,\operatorname{blockdiag}(J_{10})+0.1J_p$，所以正定。该结构的大特征值随维数变化，不能把它误当成所有维数共享同一个总体谱。
+4. Spiked：固定正交方向，特征值为 $6,3,1,\ldots,1$。
+
+每条件重复 `r B` 次。基础种子 20261103，第 $k$ 个条件使用 $20261103+1000k$，条件顺序按计划书五组依次遍历四种结构。独立标准正态矩阵右乘 $\operatorname{chol}(\Sigma)$ 后生成 $X$，再使用 `cov(X)`。主分析代码只需 base R。各条件保存全部重复的完整有序特征值，维度为 `[重复, 特征值序号, 方法]`，而非仅保留极端特征值。
+
+## 六种方法
+
+|代码名|估计量|强度来源|
+|:---|:---|:---|
+|sample|$S$|0|
+|sphere_025|$0.75S+0.25\mu I$|固定 0.25|
+|sphere_050|$0.5S+0.5\mu I$|固定 0.5|
+|sphere_100|$\mu I$|固定 1，展示过度收缩和方向退化|
+|sphere_auto|$(1-\hat\lambda_s)S+\hat\lambda_s\mu I$|B 的正态矩估计|
+|diag_auto|$(1-\hat\lambda_d)S+\hat\lambda_d\operatorname{diag}(S)$|B 的正态矩估计|
+
+固定强度用于分离“谱如何随收缩变化”的机制，数据驱动方法用于与 B 衔接。没有使用真实 $\Sigma$ 选择实践强度，也不将 B 的矩估计称为 corpcor 或标准 Ledoit–Wolf 的逐数值等价实现。常相关交叉验证和 corpcor 的实现对照属于 B 的任务，本模块没有重复展开。
+
+为使估计方法可复核，写出实际使用的 B 公式。记 $m=n-1$，$D=(m-1)(m+2)$，则
+
+$$
+\widehat{\operatorname{Var}}(S_{ij})
+=\frac{(m-2)S_{ij}^2+mS_{ii}S_{jj}}D=:V_{ij},
+$$
+
+$$
+\widehat{\operatorname{tr}(\Sigma^2)}
+=\frac{m^2\operatorname{tr}(S^2)-m\operatorname{tr}(S)^2}{D}=:q.
+$$
+
+两种未截断强度分别为
+
+$$
+\tilde\lambda_s=\frac{\sum_{ij}V_{ij}-2q/(mp)}{\|S-\mu I\|_F^2},
+\qquad
+\tilde\lambda_d=\frac{\sum_{i\ne j}V_{ij}}{\|S-\operatorname{diag}(S)\|_F^2}.
+$$
+
+最终截断到 $[0,1]$。分母小于机器精度相对阈值时设为 1。正态矩公式利用 Wishart 二阶矩消除相应偏差；这里是比值型的实用强度估计，不宣称在有限样本中恰好达到真正的最优风险。球形分子的修正项来自目标 $\mu I$ 与 $S$ 共享随机性，所以不能直接使用固定目标的 $a/(a+b)$ 而忽略交叉项。
+
+## 指标与 Monte Carlo 不确定性
+
+对每份样本、每种方法记录最大/最小特征值、数值秩、零特征值比例、条件数、最大特征值绝对误差、排序谱 Pearson 相关、Frobenius 损失 $\|\hat\Sigma-\Sigma\|_F^2$ 和谱误差 $\|\hat\Sigma-\Sigma\|_2$。总体或估计谱为常数时，排序谱 Pearson 相关无定义，保留 NA。将两列先排序后再算 Spearman 会得到缺乏信息的指标，因此没有使用这种定义。
+
+Frobenius 损失的 Monte Carlo 均值估计风险。谱范数误差的均值记为平均谱误差，不冒称其平方风险。每个有限标量报告重复间均值、标准差、$\mathrm{MCSE}=s/\sqrt B$、以及均值的近似 95% 区间 $\bar z\pm t_{B-1,.975}s/\sqrt B$。区间描述模拟均值的数值不确定性，不是单份数据的统计置信区间，也不是每个特征值的覆盖区间，未做多重比较校正。
+
+收缩与样本协方差的误差比较使用同样本的成对差值，并提供成对均值区间。奇异率另外提供 Wilson 95% 区间。条件数若出现无穷，则均值记录 Inf、其 SD/MCSE/均值区间记 NA，并单独记录有限值个数与奇异率，绝不删除无穷后以剩下的有限均值冒充整体均值。
+
+数值判秩阈值为 $10^{-8}\max(1,|d_1|)$，与 A 的谱指标口径一致。奇异矩阵的最小特征值可能因浮点舍入成为约 $10^{-15}$ 的负值，原始极值予以保留，并通过秩与零质量列解释。不能把这种舍入误差解读为理论上非半正定。
+
+# 实验结果
+
+## 单位总体：谱扩散、边缘与零点质量
+
+```{r mp,fig.cap='图 1：Identity 的全部重复谱与 MP 连续密度。直方图按所有 p 个特征值归一化；零点离散质量单独列出，未重新将正谱归一化为 1。',out.width='100%'}
+fig('01_mp_identity')
+```
+
+随着 $c_\nu$ 增大，连续谱明显展宽。接近奇异组的谱下端接近零，奇异组出现理论必然的 0.505 零点质量。奇异组的正特征值仍可远离零，不能用“最小正特征值”代替整个矩阵的最小特征值后声称可逆。
+
+本实验 Identity 接近奇异组中，样本协方差平均最小特征值为 `r num('near_singular','identity','sample','dmin',5)`，平均条件数为 `r num('near_singular','identity','sample','kappa',1)`；球形自动收缩后分别为 `r num('near_singular','identity','sphere_auto','dmin',5)` 和 `r num('near_singular','identity','sphere_auto','kappa',2)`。这显示了求逆稳定性改善的直接来源。
+
+下表给出 Identity 的条件数全部 Monte Carlo 汇总。奇异组的样本协方差均值为 Inf，区间为空是数学上不可作有限均值区间，而非缺少模拟。
+
+```{r identity-kappa}
+show_metric('identity','kappa')
+```
+
+## 四种真实结构：总体谱、样本谱与收缩谱
+
+```{r spectra,out.width='100%',fig.cap='图 2：高维组 n=200,p=150 的平均有序谱。虚线为各结构真实谱。AR(1)、Block、Spiked 未套用单位总体 MP 密度。'}
+fig('02_spectra_four_structures')
+```
+
+Identity 的真实谱没有结构差异，向球形目标收缩与总体形状相符。AR(1) 和 Block 的真实谱不相等，球形收缩必须在降低噪声和压平结构之间权衡。Block 中即使矩阵对角都为 1，非零协方差仍构成真实信号，不能将“保留对角方差”误当成“保留整个块结构”。Spiked 则直观展示了较大的真实特征值被收缩压低的代价。
+
+```{r condition,out.width='100%',fig.cap='图 3：四种结构下条件数的对数箱线图。S=样本、SA=球形自动、DA=对角自动。每种结构奇异组的样本协方差全部为 Inf，单独标注，不作为有限数画入箱线图。'}
+fig('03_condition_numbers')
+```
+
+```{r extremes,out.width='100%',fig.cap='图 4：最小和最大特征值均值及近似 95% Monte Carlo 区间。L/M/H/N/S 对应五组参数，图中连线只帮助阅读不同设计点，不能视为固定 n 下的单因素因果曲线。'}
+fig('04_extreme_eigenvalues')
+```
+
+四组结构都在 $p>n-1$ 时产生奇异样本协方差，而正强度收缩恢复正定。不同结构的真实条件数本来就不同，跨结构比较条件数时必须同时查看总体谱。参数表中 $n$ 也发生变化，因此对不同设计点的数值差异只作本设计范围内的比较，不把它们全部归因于 $p/n$ 的单独改变。
+
+## 同时检查风险：完全收缩可以稳定但有偏
+
+```{r risk,out.width='100%',fig.cap='图 5：平均 Frobenius 损失与平均谱误差。球形强度 1 的条件数总为 1，但其统计误差由真实结构决定。'}
+fig('05_risk_and_spectral_error')
+```
+
+例如低维 Spiked 组中，样本协方差平均 Frobenius 损失为 `r num('low','spiked','sample','frobenius')`，完全球形收缩则为 `r num('low','spiked','sphere_100','frobenius')`，即使后者的条件数为 1，损失仍明显更大。自动球形强度的损失为 `r num('low','spiked','sphere_auto','frobenius')`。这个例子直接否定了“条件数越小，估计一定越准”的推断。
+
+高维 Spiked 组的样本协方差、自动球形、自动对角、完全球形收缩平均 Frobenius 损失分别为 `r num('high','spiked','sample','frobenius')`、`r num('high','spiked','sphere_auto','frobenius')`、`r num('high','spiked','diag_auto','frobenius')`、`r num('high','spiked','sphere_100','frobenius')`。对本组而言，保留一定结构信息的自动收缩能够在稳定性与偏差之间取得比完全收缩更合适的折中。
+
+```{r tradeoff,out.width='100%',fig.cap='图 7：高维 Spiked 的不同球形强度。条件数与 Frobenius 损失的最优点不必一致。'}
+fig('07_shrinkage_tradeoff')
+```
+
+**不同误差指标的结论确实可能相反。** 高维 Spiked 组中，自动球形收缩将平均平方 Frobenius 损失从 `r num('high','spiked','sample','frobenius')` 降至 `r num('high','spiked','sphere_auto','frobenius')`，条件数从 `r num('high','spiked','sample','kappa')` 降至 `r num('high','spiked','sphere_auto','kappa')`，但平均谱范数误差从 `r num('high','spiked','sample','spectral')` 升至 `r num('high','spiked','sphere_auto','spectral')`。对角自动收缩的对应结果也并非各指标同时改善。Frobenius 损失累计所有方向的平方误差，谱范数取最坏方向误差；向球形目标收缩可能降低大量噪声方向的误差，同时压低强尖峰并增加最坏方向的误差。这里没有更改任何模拟数据，不能仅根据 Frobenius 改善宣称谱范数也改善。
+
+为便于验收，下表列出高维组每种结构下相对于样本协方差的**成对 Frobenius 损失差**，负数表示平均损失下降。其余设计点及谱误差差值见 CSV。
+
+```{r paired}
+d<-paired[paired$regime=='high'&paired$metric=='delta_frobenius'&paired$method!='sample',]
+knitr::kable(d[,c('structure','method','mean','sd','mcse','ci_lower','ci_upper')],digits=4,row.names=FALSE)
+```
+
+## 尖峰模型：方向恢复与谱压缩的区别
+
+```{r pca,out.width='100%',fig.cap='图 6：Spiked 的样本主方向平方内积、前二维主子空间误差。橙色点为 c_df<1 时 Paul (2007) 的渐近参考。球形强度小于 1 时与样本方向完全相同，完全球形收缩的方向指标无定义。'}
+fig('06_spiked_pca')
+```
+
+随着维样比增加，样本主方向恢复质量下降，即使人口尖峰保持为 6 和 3。高维组第一、第二方向平均平方内积分别为 `r num('high','spiked','sample','alignment1')` 与 `r num('high','spiked','sample','alignment2')`，前二维主子空间平均投影损失为 `r num('high','spiked','sample','subspace_loss')`。较弱的第二尖峰通常更难恢复。
+
+报告的球形方向指标使用精确代数关系复用样本特征向量，而不是将两个数值特征分解产生的任意符号进行比较。独立测试另行验证仿射公式和特征向量残差。对角收缩为不同矩阵重新计算主方向，其结果见完整汇总，不默认它一定提高方向恢复。
+
+```{r pca-table}
+show_metric('spiked','alignment1',methods=c('sample','sphere_auto','diag_auto','sphere_100'))
+```
+
+# 验证、可复现性与验收
+
+运行顺序与完整命令见根目录 README。已有结果可直接阅读，无需先运行模拟。报告仅读取保存的表格和图形，不在 Knit 时暗中重新生成实验。源 Rmd 修改后可重新构建 HTML，报告内数值自动从正式 CSV 读取。
+
+本项目提供以下验证：
+
+- 四种协方差的对称正定性、Block 组别、Spiked 人口特征值；
+- 模型构造前后随机流状态不变，全部 10,000 份样本的记录与条件重复数；
+- 与上传 B 代码的目标矩阵和强度函数逐数值一致；
+- 球形仿射特征值、特征向量残差、正强度正定性；
+- $p>n-1$ 的秩、零质量、无穷条件数，以及 $c=1$ 和 $c>1$ 的 MP 总质量；
+- 重复模拟的样本风险与正态精确理论风险之差，以 MCSE 为参照；
+- 保存一个完整样本夹具，由 Python/NumPy 独立重算协方差、强度、误差及 PCA 指标，与 R 输出比较；
+- 对正式结果进行记录数、NA、Inf、零点原子、收缩正定、方向保持等整体验收。
+
+实际通过情况、最大数值差与风险校验数值写入 `docs/validation.md`，不以人工填写的“成功”代替执行记录。环境版本与随机数算法记录于 `data/sessionInfo.txt`，数据与代码哈希在 `MANIFEST.sha256`。跨 R/BLAS 实现的浮点末位可能不同；固定种子和环境记录支持重建，验收采用明确容差而非要求所有文件字节在任意系统相同。
+
+# 结论、限制与对其他成员的接口
+
+本模块形成三项可核验结论：高维样本谱可以在总体无结构时仍显著扩散；球形收缩的精确仿射变换能提高最小特征值并改善条件数；这种稳定化既不保证所有总体下的统计风险改善，也不自动改进主方向恢复。
+
+限制包括：仅研究高斯样本和四种固定参数模型；每条件 500 次仍有 Monte Carlo 误差；MP 密度验证限于 Identity；尖峰渐近参考限于所引用定理的范围；没有实验覆盖弱尖峰相变两侧；没有研究非线性谱收缩、重尾稳健性或下游检验的重新校准。有限样本的自动强度估计也可能不理想，不能据本实验宣称对所有协方差和所有损失均占优。
+
+交给 A 的接口是样本风险精确公式与谱失真解释；交给 B 的接口是复用的估计函数与同样本比较；交给 D 的接口是最小特征值、条件数和奇异率。条件数改善提供数值求逆的基础，但 Hotelling $T^2$ 的显著性水平是否准确需要 D 单独模拟和校准，本报告不直接从可逆性推出检验有效性。
+
+# 参考文献与来源
+
+1. Marchenko, V. A. & Pastur, L. A. (1967). *Distribution of eigenvalues for some sets of random matrices*. Mathematics of the USSR-Sbornik, 1(4), 457–483. DOI: [10.1070/SM1967v001n04ABEH001994](https://doi.org/10.1070/SM1967v001n04ABEH001994)。用于 MP 定律。
+2. Paul, D. (2007). *Asymptotics of sample eigenstructure for a large dimensional spiked covariance model*. Statistica Sinica, 17, 1617–1642. [期刊原文](https://www3.stat.sinica.edu.tw/statistica/oldpdf/A17n418.pdf)。定理 1、2、4 用于尖峰特征值和特征向量参考，本报告限制在 $c<1$。
+3. Ledoit, O. & Wolf, M. (2004). *A well-conditioned estimator for large-dimensional covariance matrices*. Journal of Multivariate Analysis, 88(2), 365–411. DOI: [10.1016/S0047-259X(03)00096-4](https://doi.org/10.1016/S0047-259X(03)00096-4)。线性收缩的研究背景，当前代码沿用 B 的明确公式。
+4. 组内 `project_plan.rmd` 与 A/B 上传快照，2026-11-03。正式要求、模型参数和复用函数的追溯见 `provenance/README.md`。

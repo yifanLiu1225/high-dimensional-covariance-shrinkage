@@ -1,0 +1,6 @@
+html {scroll-behavior:smooth} body {font-family:"Noto Sans CJK SC","PingFang SC",sans-serif;max-width:1080px;margin:48px auto;padding:0 36px;color:#183045;line-height:1.85;background:#fcfcfa;font-size:17px}
+h1,h2,h3 {color:#123d5d;line-height:1.35;margin-top:2em} h1.title {font-size:34px;margin-top:1em}
+a{color:#0072b2} table{border-collapse:collapse;font-size:13px;display:block;overflow:auto;max-width:100%;margin:20px 0;background:white}
+th,td{border-bottom:1px solid #d7dfe6;padding:9px 12px;text-align:left;white-space:nowrap}th{background:#edf3f8}
+img{max-width:100%;height:auto}code{background:#edf2f5;padding:2px 5px;font-size:.9em}pre{padding:18px;overflow:auto;background:#edf2f5}math[display="block"]{overflow-x:auto;padding:12px 0;font-size:1.08em}#TOC{border-left:4px solid #0072b2;padding:8px 22px;background:#edf3f8}figcaption,.caption{font-size:14px;color:#596c7c}blockquote{margin:18px 0;padding:8px 20px;border-left:4px solid #0072b2}
+@media print{body{font-size:11pt;max-width:none;padding:0}#TOC{break-after:page}h1,h2{break-after:avoid}img,table{break-inside:avoid}a{color:inherit}}
