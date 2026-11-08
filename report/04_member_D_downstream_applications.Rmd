@@ -1,0 +1,347 @@
+---
+title: "组员 D: 下游影响与综合应用"
+subtitle: "马氏距离、Hotelling 检验与协方差误差的传播"
+date: "2026-11-08"
+lang: zh-CN
+output:
+  html_document:
+    toc: true
+    toc_float: true
+    number_sections: true
+    self_contained: true
+    math_method: mathml
+    theme: readable
+    code_folding: hide
+    css: style_member_D.css
+---
+
+```{r setup,include=FALSE}
+knitr::opts_chunk$set(echo=FALSE,warning=FALSE,message=FALSE)
+root <- if(file.exists('tables/member_D/summary_long.csv')) '.' else '..'
+s <- read.csv(file.path(root,'tables/member_D/summary_long.csv'))
+t <- read.csv(file.path(root,'tables/member_D/rejection_rates.csv'))
+paired <- read.csv(file.path(root,'tables/member_D/paired_differences.csv'))
+fail <- read.csv(file.path(root,'tables/member_D/inverse_failure_rates.csv'))
+iris_holdout <- read.csv(file.path(root,'tables/member_D/iris_holdout_scores.csv'))
+conditions <- read.csv(file.path(root,'tables/member_D/semi_real_condition.csv'))
+methods <- c('sample', 'sphere_auto', 'diag_auto')
+method_labels <- c('普通样本协方差', '球形自动收缩', '对角自动收缩')
+pct <- function(x) sprintf('%.2f%%', 100*x)
+high <- function(structure_name, metric_name) {
+  rows <- subset(s, structure == structure_name & regime == 'high' & metric == metric_name)
+  rows[match(methods, rows$method), ]
+}
+v <- function(st,reg,mt,me,digits=3) {
+  x<-s$mean[s$structure==st&s$regime==reg&s$method==mt&s$metric==me]
+  formatC(x,digits=digits,format='f')
+}
+rr <- function(st,reg,mt,rule='classical_F',state='null') {
+  x<-t$rate[t$structure==st&t$regime==reg&t$method==mt&t$rule==rule&t$state==state]
+  paste0(formatC(100*x,digits=1,format='f'),'%')
+}
+fig <- function(n)knitr::include_graphics(file.path(root,'figures/member_D',paste0(n,'.png')))
+show_summary <- function(st,metric,caption=NULL) {
+  d<-s[s$structure==st&s$metric==metric,]
+  d<-d[order(match(d$regime,c('low','moderate','high','near_singular','singular')),match(d$method,c('sample','sphere_auto','diag_auto'))),]
+  knitr::kable(d[,c('regime','method','N','mean','sd','mcse','lo','hi')],
+               format='html', caption=caption, digits=4, row.names=FALSE)
+}
+```
+
+# 摘要与任务对应
+
+本模块回答项目最后一个问题：**协方差估计的风险与谱性质改善以后，依赖逆矩阵的距离计算和统计推断是否随之改善？**
+
+A 的模块给出 Wishart 关系和样本协方差风险，B 研究收缩目标与强度，C 解释谱失真及条件数。本模块继续研究逆矩阵中的误差传播，实施马氏距离与 Hotelling 型统计量的模拟，并完成真实低维控制组、半真实高维实验及全组结论。
+
+本次采用五组维数设计，四种理论总体及一种半真实总体，每条件500次评估，另用独立500次原假设模拟确定理想参考临界值。普通样本协方差、B/C 的球形自动收缩、对角自动收缩使用相同样本。报告读取已保存结果，重新编译不会启动模拟。
+
+| plan 中 D 的任务 | 本报告位置 | 代码或输出 |
+|:--|:--|:--|
+| 马氏距离与逆矩阵依赖 | 第2节 | 二次型与逆矩阵误差推导 |
+| Hotelling经典条件与误差传播 | 第2、3节 | 两类临界值及拒绝率模拟 |
+| 普通与收缩的距离比较 | 第5节 | 图1、2及summary_long.csv |
+| 经验拒绝率 | 第6节 | 图3、4、补图8及rejection_rates.csv |
+| 低维控制组与半真实实验 | 第7节 | 图5、6、留出评分和加噪前后的条件数表 |
+| LDA联系和Graphical LASSO边界 | 第8节 | 理论讨论，不冒充额外实验 |
+| 图表、综合结论和局限 | 第9、10节 | 成对差值、图表和结论 |
+
+# 逆矩阵与下游二次型
+
+## 马氏距离及其谱表示
+
+设 $X\sim N_p(\mu,\Sigma)$，$\Sigma$正定，$z=x-\mu$。马氏距离平方为
+
+$$D^2(x)=z^\top\Sigma^{-1}z.$$
+
+若 $\Sigma=U\operatorname{diag}(\tau_1,\ldots,\tau_p)U^\top$，令 $a=U^\top z$，则
+
+$$D^2(x)=\sum_{j=1}^p\frac{a_j^2}{\tau_j}.$$
+
+这一表示说明距离按各主方向的总体方差加权。小方差方向上的同样偏离具有更大权重。但若样本把一个特征值误估得过小，逆权重就会被放大。本模块的距离实验使用**总体均值已知0、独立新观测**，只研究协方差估计误差，不将均值估计误差和样本内距离混进来。
+
+## 协方差误差怎样传播
+
+令 $E=\widehat\Sigma-\Sigma$。两矩阵均可逆时，
+
+$$\widehat\Sigma^{-1}-\Sigma^{-1}
+=-\widehat\Sigma^{-1}E\Sigma^{-1}.$$
+
+代入二次型，可得
+
+$$\left|z^\top\widehat\Sigma^{-1}z-z^\top\Sigma^{-1}z\right|
+\le \|z\|_2^2\,\|\widehat\Sigma^{-1}-\Sigma^{-1}\|_2.$$
+
+若 $\|E\|_2<\lambda_{\min}(\Sigma)$，由 Weyl 不等式有
+
+$$\|\widehat\Sigma^{-1}-\Sigma^{-1}\|_2
+\le \frac{\|E\|_2}{\lambda_{\min}(\Sigma)
+\{\lambda_{\min}(\Sigma)-\|E\|_2\}}.$$
+
+因此误差不仅取决于协方差的估计误差，还取决于最小特征值与零的距离。条件数改善提供数值基础，但不直接保证任意二次型的统计误差下降。
+
+```{r inverse-weight,out.width='100%',fig.cap='图7 理论示意，不是模拟结果。固定平均方差为1时，正强度球形收缩给逆权重设置有限上界。'}
+fig('07_inverse_weight')
+```
+
+## 普通马氏距离膨胀的精确基准
+
+设 $S$来自独立的$n$条正态训练样本，$m=n-1$。Wishart逆矩阵期望在$m>p+1$时存在，且
+
+$$E(S^{-1})=\frac{m}{m-p-1}\Sigma^{-1}.$$
+
+给定独立新观测$z$，
+
+$$E_S\left\{\frac{z^\top S^{-1}z}{z^\top\Sigma^{-1}z}\mid z\right\}
+=\frac{n-1}{n-p-2}.$$
+
+例如高维组$n=200,p=150$的理论膨胀系数为$199/48\approx4.146$，接近奇异组$n=150,p=140$为$149/8=18.625$。这同时解释了为何**逐元素无偏的$S$不产生无偏的逆矩阵或距离**。该式要求$n>p+2$，不能外推到所有可逆情形；$p\ge n$时普通距离无定义。
+
+# Hotelling 统计量与参考分布
+
+## 经典单样本检验
+
+检验$H_0:\mu=\mu_0$，经典统计量为
+
+$$T^2=n(\bar X-\mu_0)^\top S^{-1}(\bar X-\mu_0).$$
+
+在独立同分布多元正态、$\Sigma$正定、$n>p$、$S$采用$n-1$分母时，$\bar X$与$S$独立，并且
+
+$$\frac{n-p}{p(n-1)}T^2\sim F_{p,n-p}\quad(H_0).$$
+
+显著性水平$\alpha=0.05$时，经典阈值为
+
+$$c_F=\frac{p(n-1)}{n-p}F_{p,n-p;0.95}.$$
+
+原假设为真时，拒绝概率应为5%。这里的5%是**误报率**，不是分类正确率。普通$S$在高维下距离膨胀，并不意味着其经典检验自动失效：经典F阈值本来就随$n,p$调整了这种分布变化。
+
+## 换成收缩协方差以后
+
+定义收缩二次型
+
+$$Q=n(\bar X-\mu_0)^\top\widehat\Sigma^{-1}(\bar X-\mu_0).$$
+
+一般情况下，$Q$不再具有上面的精确F分布。直接沿用$c_F$只能作为**错误使用参考分布的对照**，不能作为有效收缩检验的理论依据。
+
+本模块分别报告以下规则：
+
+|规则|用途|适用边界|
+|:--|:--|:--|
+|普通$S$加经典F|验证课程理论的经验拒绝率|正态且$n>p$|
+|收缩统计量加经典F|展示机械替换协方差的后果|一般没有正确显著性保证|
+|各统计量加理想模拟校准|比较重新匹配参考分布后的表现|使用真实$\Sigma$，仅是模拟基准|
+
+**理想模拟校准不等于已经解决了真实数据检验。** 每个条件另生成500个原假设统计量，取95%经验分位数，再在独立500次评估中使用。这个校准知道真实$\Sigma$；未知总体时仍需适配的高维检验或经过理论与模拟验证的重抽样方法，本报告不将oracle结果当作现成p值。
+
+# 实验设计与估计方法
+
+## 总体和维数
+
+```{r design}
+knitr::kable(data.frame(regime=c('low','moderate','high','near_singular','singular'),n=c(500,200,200,150,100),p=c(10,50,150,140,200),ratio=c(.02,.25,.75,140/150,2)),digits=3)
+```
+
+四种理论总体沿用 A/B/C 的参数：Identity；$\rho=0.6$的AR(1)；每组10维、组内0.7、组间0.1的Block；特征值为6、3、其余1的Spiked。Spiked 按 B、C 源码将种子设为 1000+p，对高斯矩阵作 QR 分解来固定主方向。D 构造总体后恢复抽样随机数状态。四种理论结构在五组维数下与 B、C 的真实协方差矩阵逐元素一致。
+
+半真实总体按计划书第 8.2 节构造。以鸢尾花 4 个测量变量的物种内残差相关矩阵 $R_4$ 保留这四维的相关结构及主方向，加入 $p-4$ 个相互独立、也与前四维独立的标准正态噪声变量。总体协方差设为 $\operatorname{diag}(R_4,I_{p-4})$，再按五组维数设计生成高斯样本。
+
+## 与 B/C 一致的估计器
+
+三种方法为样本$S$、球形自动收缩、对角自动收缩。令$m=n-1$、$D=(m-1)(m+2)$，沿用C报告列明的B公式：
+
+$$V_{ij}=\frac{(m-2)S_{ij}^2+mS_{ii}S_{jj}}D,\qquad
+q=\frac{m^2\operatorname{tr}(S^2)-m\operatorname{tr}(S)^2}D.$$
+
+$$\tilde\lambda_s=\frac{\sum_{ij}V_{ij}-2q/(mp)}{\|S-\tau I\|_F^2},\qquad
+\tilde\lambda_d=\frac{\sum_{i\ne j}V_{ij}}{\|S-\operatorname{diag}(S)\|_F^2},\qquad
+\tau=\operatorname{tr}(S)/p.$$
+
+最终截断到$[0,1]$，数值退化的分母设强度为1。未使用真实$\Sigma$选择实践强度。用同一份样本矩阵分别运行 B 的 `estimate_shrinkage_intensity`、C 的 `estimate_intensity_C` 和 D 的独立实现。在 20 种正式设计及 6 个边界输入上分别检查两种目标，共 52 组。收缩强度和估计矩阵的最大绝对差均为 0，详见 [组内源码核对表](../tables/member_D/team_code_check.csv)。
+
+## 指标与不确定性
+
+独立新观测的距离误差为
+
+$$L_D=\frac{|\widehat D^2-D^2|}{D^2},\qquad R_D=\frac{\widehat D^2}{D^2}.$$
+
+另报告平方Frobenius损失、精度矩阵相对平方误差
+
+$$L_{\mathrm{inv}}=\frac{\|\widehat\Sigma^{-1}-\Sigma^{-1}\|_F^2}{\|\Sigma^{-1}\|_F^2},$$
+
+以及求逆失败率、原假设拒绝率和一个固定备择下的功效。同一份样本与同一新观测比较三种方法，另输出收缩减样本的**成对误差差值**。均值区间为$t$近似Monte Carlo区间；拒绝率采用Wilson区间。对模拟校准的Wilson区间条件于本次得到的阈值，不包含校准误差。它们都不是对某份实际数据的参数置信区间。
+
+每条件种子为基础种子20261107加1000乘条件编号，按五种维数、五种结构依次遍历。采样采用$n-1$个独立正态对比向量生成$S$，这与通常中心化高斯样本协方差完全同分布；独立生成$\sqrt n(\bar X-\mu_0)$。普通$S$在$p\ge n$时记失败，绝不使用广义逆替换而隐去失败。
+
+# 马氏距离与逆矩阵结果
+
+```{r distance,out.width='100%',fig.cap='图1 四种理论总体下距离误差的均值与95% Monte Carlo区间。纵轴为对数；奇异组普通方法无定义。'}
+fig('01_mahalanobis_error')
+```
+
+高维Identity组普通距离膨胀比均值为 `r v('identity','high','sample','distance_ratio')`，与4.146的精确基准比较。AR(1)组普通距离的平均相对绝对误差为 `r v('ar1','high','sample','distance_rel_error')`，球形收缩为 `r v('ar1','high','sphere_auto','distance_rel_error')`，对角收缩为 `r v('ar1','high','diag_auto','distance_rel_error')`。这些是距离误差，不是协方差元素的均方误差。
+
+```{r dist-box,out.width='100%',fig.cap='图2 高维组距离膨胀比的箱线图。靠近1表示距离标尺接近真实值，箱体高度表示中间 50% 的模拟结果在对数坐标上的跨度。'}
+fig('02_distance_distribution')
+```
+
+下表保留AR(1)距离误差的均值、标准差、Monte Carlo标准误与区间。奇异组普通方法有效次数为0，保留NA，不能写成零误差。
+
+```{r distance-table}
+show_summary('ar1','distance_rel_error')
+```
+
+在 $n=200,p=150$ 的 AR(1) 组，A 的普通样本协方差平均平方 Frobenius 损失为 114.689。下表用 B 第 19 页的数字对照 D 独立模拟的同一项指标。
+
+```{r abc-comparison}
+risk <- high('ar1', 'frobenius')
+knitr::kable(data.frame(方法 = method_labels,
+                        'B 的平均平方 Frobenius 损失' = sprintf('%.3f', c(114.715, 68.120, 69.080)),
+                        'D 的平均平方 Frobenius 损失' = sprintf('%.3f', risk$mean),
+                        'D 的距离平方误差' = pct(high('ar1','distance_rel_error')$mean),
+                        check.names = FALSE),
+             align = 'lrrr', caption = '高维 AR(1) 组。B、D 各自独立抽样 500 次。')
+```
+
+两种收缩的距离误差都大幅低于普通方法。球形收缩在矩阵损失上的均值较小，两种收缩的距离误差只差约 0.08 个百分点。C 第 28 页也区分了整体矩阵误差、谱误差和条件数各自衡量的问题。
+
+```{r paired-table}
+d<-subset(paired,regime=='high'&metric=='delta_distance_rel_error')
+knitr::kable(d[,c('structure','method','N','mean','lo','hi')],digits=4,row.names=FALSE,caption='高维组同样本成对距离误差差值，负数表示收缩误差较低。')
+```
+
+# Hotelling 型检验结果
+
+```{r null,out.width='100%',fig.cap='图3 原假设经验拒绝率。虚线为名义水平5%。区分经典阈值对照和理想模拟校准。'}
+fig('03_null_rejection_rates')
+```
+
+AR(1)高维组，普通$S$加经典F的经验拒绝率为 `r rr('ar1','high','sample')`；球形自动收缩直接套经典F为 `r rr('ar1','high','sphere_auto')`；配合理想校准后为 `r rr('ar1','high','sphere_auto','oracle_MC')`。应据此讨论参考分布变化，不能将拒绝率越小简单解释成方法越好。
+
+```{r tdist,out.width='100%',fig.cap='补图8  AR(1) 高维组。每行显示 500 个原假设统计量；三行共用坐标，便于比较经典阈值与独立模拟阈值。'}
+fig('08_hotelling_null_distribution')
+```
+
+在这一组，普通方法的经典临界值为 894.1。球形收缩统计量的独立模拟临界值为 183.2。统一套用 894.1 使 500 个球形收缩统计量全部落在拒绝域之外。按球形方法自己的理想临界值计算，500 次中有 21 次进入拒绝域。
+
+```{r rejection-table}
+d<-subset(t,regime=='high'&structure=='ar1'&state=='null')
+knitr::kable(d[,c('method','rule','N','rejected','rate','lo','hi')],digits=4,row.names=FALSE)
+```
+
+```{r power,out.width='100%',fig.cap='图4 理想校准下的功效。只研究一个预先设定方向，不能概括所有备择。'}
+fig('04_power')
+```
+
+设 $C$ 是满足 $\Sigma=C^\top C$ 的 Cholesky 上三角因子。预先指定备择均值偏移 $\delta=\sqrt{10/n}\,C^\top e_1$，因此 $n\delta^\top\Sigma^{-1}\delta=10$。功效计算沿用各方法在原假设下分别估计的理想阈值。AR(1) 高维组在这个指定方向下，普通法的经验功效为 `r rr("ar1","high","sample","oracle_MC","alt")`，球形和对角收缩分别为 `r rr("ar1","high","sphere_auto","oracle_MC","alt")` 与 `r rr("ar1","high","diag_auto","oracle_MC","alt")`。更换备择方向或总体结构可能改变结果。
+
+# 真实低维控制与半真实高维应用
+
+## 真实 iris 低维留出实验
+
+iris有150条观测、4个数值变量及3个物种。每次每个物种抽30条训练、20条测试。**物种均值、变量尺度和协方差均只用训练集估计**。去除训练集物种均值，合并物种内残差；有效协方差自由度为90−3=87。测试残差使用相应训练物种均值，不泄露测试均值。
+
+真实$\Sigma$未知，因此不虚构“真实距离误差”。使用留出高斯评分
+
+$$\log|\widehat\Sigma|+\frac1{n_{test}}\sum_i
+(x_i-\widehat\mu_{g_i})^\top\widehat\Sigma^{-1}(x_i-\widehat\mu_{g_i}),$$
+
+省略共同常数，越小越好。该评分同时惩罚过大的距离和随意放大协方差。已知物种仅用于组内残差对照，不是LDA分类实验。
+
+```{r iris,out.width='100%',fig.cap='图6 真实低维数据的500次随机留出评分分布。同一数据集反复划分，不能当作500份独立数据的总体区间。'}
+fig('06_iris_control')
+```
+
+```{r iris-table}
+d<-aggregate(score~method,iris_holdout,function(x)c(mean=mean(x),sd=sd(x),median=median(x)))
+knitr::kable(data.frame(method=d$method,d$score),digits=4,row.names=FALSE)
+```
+
+这个低维对照用来判断收缩是否只是轻微修正，不预设它一定优于普通方法。评分接近时，应报告差异较小，而不夸大方法排序。
+
+## 半真实高维实验
+
+```{r semireal,out.width='100%',fig.cap='图5 半真实实验同时检查矩阵损失与马氏距离。前 4 维采用真实相关结构，新增维度为相互独立的标准正态噪声。'}
+fig('05_semi_real')
+```
+
+在 $n=200,p=150$ 的高维组，同一批样本上比较前 4 个变量的普通样本协方差，以及加入 146 个噪声变量后的三种估计。本节按一范数计算 $\kappa_1(A)=\|A\|_1\|A^{-1}\|_1$，并在 500 次评估中取中位数。C 对正定协方差矩阵使用二范数条件数 $\kappa_2(A)=\lambda_{\max}(A)/\lambda_{\min}(A)$。两种定义的数值可以不同。这里的条件数用于 D 模块内部比较加噪前后及三种估计方法。
+
+```{r semi-condition}
+ct <- subset(conditions, regime == 'high')
+ct <- ct[match(c('before_noise', methods), ct$method), ]
+semi_dist <- high('semi_real', 'distance_rel_error')
+semi_risk <- high('semi_real', 'frobenius')
+knitr::kable(data.frame(方法 = c('加入噪声前的普通样本协方差', method_labels),
+                       '变量数' = ct$p,
+                       '1-范数条件数中位数' = sprintf('%.2f', ct$median_condition_1),
+                       '平均平方 Frobenius 损失' = c('—', sprintf('%.2f', semi_risk$mean)),
+                       '距离平方的平均相对绝对误差' = c('—', pct(semi_dist$mean)),
+                       check.names = FALSE),
+             align = 'lrrrr', caption = '半真实高维组。加噪前一行用于比较求逆的数值条件。')
+```
+
+加入独立噪声后，普通协方差的条件数中位数由 `r sprintf("%.2f", ct$median_condition_1[1])` 升到 `r sprintf("%.2f", ct$median_condition_1[2])`。两种收缩在这个设计中都降低了条件数、矩阵损失和距离误差。新增维度彼此独立，总体协方差中多数非对角元素为零，较适合球形和对角目标。效果的幅度应结合这个设计理解。
+
+```{r semi-table}
+show_summary('semi_real','distance_rel_error',
+             caption='半真实总体各维数下的马氏距离平方相对绝对误差')
+```
+
+```{r semi-reject}
+d<-subset(t,structure=='semi_real'&regime=='high'&state=='null')
+knitr::kable(d[,c('method','rule','N','rate','lo','hi')],
+             format='html', digits=4, row.names=FALSE, caption='半真实高维组原假设拒绝率')
+```
+
+# 应用联系与研究边界
+
+LDA的判别函数为
+
+$$\delta_k(x)=x^\top\Sigma^{-1}\mu_k-\tfrac12\mu_k^\top\Sigma^{-1}\mu_k+\log\pi_k.$$
+
+因此逆协方差误差可以改变判别权重与边界，收缩可能提高数值稳定性。但分类准确率还取决于均值差异、训练集与目标是否匹配。本模块没有开展LDA实验，不能声称已证明分类准确率提高。
+
+Graphical LASSO一般研究精度矩阵$\Theta=\Sigma^{-1}$，通过稀疏惩罚估计条件独立图。本项目将协方差向球形或对角目标收缩，关注整体风险、谱与下游二次型。对角收缩减少协方差，并不等同于Graphical LASSO的稀疏精度矩阵估计。
+
+# 综合结论与局限
+
+从全组主线看，A解释无偏为何不足，B给出偏差与方差的权衡，C解释谱失真与正定性，本模块验证了逆矩阵误差怎样影响距离和检验。
+
+本设计中，高维普通马氏距离出现与逆Wishart理论一致的系统膨胀，收缩可以明显降低多种总体下的距离误差，并使奇异样本下的二次型重新可计算。目标结构与下游损失仍影响改进幅度和方法排序，不能从条件数或单一总体推广出普遍最优结论。
+
+更关键的是，**稳定计算与有效推断是两个需要分别验证的条件**。经典Hotelling的参考分布匹配普通$S$，替换成收缩协方差后，不能机械保留经典临界值。理想校准展示了匹配参考分布后的表现，但尚未交付未知总体下的有效高维检验方案。
+
+限制包括正态假设、固定总体参数、每条件500次的模拟误差、单一备择方向、校准不确定性未合并进Wilson区间、真实低维数据重复划分之间不独立，以及半真实总体的新增维度仍为合成变量。未研究重尾稳健性、非线性收缩、LDA分类效果或稀疏图模型。
+
+# 复现与提交接口
+
+本部分使用R完成模拟实验、结果统计和绘图。主要代码：
+
+- `04_run_member_D.R`：运行完整实验。
+
+
+# 参考文献
+
+1. NIST/SEMATECH e-Handbook，Hotelling's T squared，https://www.itl.nist.gov/div898/handbook/pmc/section5/pmc543.htm 。用于经典正态模型下的F分布标定。
+2. R datasets包，iris数据文档，https://stat.ethz.ch/R-manual/R-devel/library/datasets/html/iris.html 。
+3. Ledoit与Wolf（2004），A well-conditioned estimator for large-dimensional covariance matrices，Journal of Multivariate Analysis 88，365–411。作为线性收缩背景，本模块实践强度以B/C报告中的明确公式为准。
