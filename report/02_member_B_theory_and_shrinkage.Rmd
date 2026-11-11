@@ -21,6 +21,7 @@ output:
 4. 通过风险曲线说明目标偏差与过度收缩的影响。
 
 ```{r setup, include=FALSE}
+#install.packages(c("ggplot2", "corpcor"))
 knitr::opts_chunk$set(echo = TRUE, message = FALSE, warning = FALSE)
 required <- c("ggplot2", "corpcor")
 missing <- required[!vapply(required, requireNamespace, logical(1), quietly = TRUE)]
