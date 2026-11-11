@@ -6,6 +6,7 @@
 # source("R/02_linear_shrinkage.R", encoding = "UTF-8")
 # results_B <- save_member_B_outputs()
 
+#install.packages(c("ggplot2", "corpcor"))
 required_packages_B <- c("ggplot2", "corpcor")
 missing_packages_B <- required_packages_B[
   !vapply(required_packages_B, requireNamespace, logical(1), quietly = TRUE)
